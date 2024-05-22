@@ -45,8 +45,8 @@ type File struct {
 	tabWidth int
 	flags    // readonly, softTab
 
-	Undo *ActionGroup
-	Redo *ActionGroup
+	UndoAction *ActionGroup
+	RedoAction *ActionGroup
 
 	class string // file type string
 }
@@ -69,8 +69,8 @@ func NewFile(rawPath string) *File {
 		tabWidth: 4,
 		flags:    0,
 
-		Undo: &ActionGroup{},
-		Redo: &ActionGroup{},
+		UndoAction: &ActionGroup{},
+		RedoAction: &ActionGroup{},
 
 		class: filepath.Ext(rawPath),
 	}
@@ -495,7 +495,7 @@ func (ff *File) IsReadonly() bool {
 */
 
 func (ff *File) IsDirtyFlag() bool {
-	return !ff.Undo.IsEmpty()
+	return !ff.UndoAction.IsEmpty()
 }
 
 func (ff *File) SetSoftTab(b bool) {

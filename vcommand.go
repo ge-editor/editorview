@@ -27,7 +27,7 @@ func (e *Editor) InsertString(s string) (file.Cursor, bool) {
 	chs := []rune(s)
 	cursor, ok := e.File.Insert(e.Cursor, chs)
 	if ok {
-		e.Undo.Push(file.Action{Class: file.Insert, Before: e.Cursor, After: cursor, Data: chs})
+		e.UndoAction.Push(file.Action{Class: file.Insert, Before: e.Cursor, After: cursor, Data: chs})
 		e.SyncEdits(insert, e.File, e.Cursor, cursor)
 		e.Cursor = cursor
 	}
@@ -331,7 +331,7 @@ func (e *Editor) InsertRune(ch rune) {
 		e.screen.Echo("Error insert_rune")
 		return
 	}
-	e.Undo.Push(file.Action{Class: file.Insert, Before: e.Cursor, After: cursor, Data: []rune{ch}})
+	e.UndoAction.Push(file.Action{Class: file.Insert, Before: e.Cursor, After: cursor, Data: []rune{ch}})
 
 	e.SyncEdits(insert, e.File, e.Cursor, cursor)
 	e.Cursor = cursor
@@ -370,7 +370,7 @@ func (e *Editor) DeleteRuneBackward() {
 
 	removed := e.RemoveRegion(e.Cursor, before)
 	e.vlines.Release(e.RowIndex, -1) //
-	e.Undo.Push(file.Action{Class: file.DeleteBackward, Before: before, After: e.Cursor, Data: *removed})
+	e.UndoAction.Push(file.Action{Class: file.DeleteBackward, Before: before, After: e.Cursor, Data: *removed})
 	e.SyncEdits(delete, e.File, e.Cursor, before)
 
 	e.PrevCx = -1
@@ -519,7 +519,7 @@ func (e *Editor) killRegion(a, b file.Cursor) {
 		return
 	}
 	e.SyncEdits(delete, e.File, a, b)
-	e.Undo.Push(file.Action{Class: file.DeleteBackward, Before: a, After: a, Data: *removed})
+	e.UndoAction.Push(file.Action{Class: file.DeleteBackward, Before: a, After: a, Data: *removed})
 	if err := kill_buffer.KillBuffer.PushKillBuffer(*removed); err != nil {
 		e.screen.Echo(err.Error())
 	}
@@ -580,7 +580,7 @@ func (e *Editor) killLineOrDeleteRune(isKillLine bool) {
 		}
 	}
 	e.SyncEdits(delete, e.File, e.Cursor, b)
-	e.Undo.Push(file.Action{Class: file.Delete, Before: e.Cursor, After: e.Cursor, Data: *removed})
+	e.UndoAction.Push(file.Action{Class: file.Delete, Before: e.Cursor, After: e.Cursor, Data: *removed})
 
 	e.PrevCx = -1
 	// e.SetDirtyFlag(true)
@@ -606,7 +606,7 @@ func (e *Editor) YankFromClipboard() {
 		return
 	}
 	e.SyncEdits(insert, e.File, e.Cursor, cursor)
-	e.Undo.Push(file.Action{Class: file.Insert, Before: e.Cursor, After: cursor, Data: r})
+	e.UndoAction.Push(file.Action{Class: file.Insert, Before: e.Cursor, After: cursor, Data: r})
 	e.Cursor = cursor
 }
 
@@ -621,7 +621,7 @@ func (e *Editor) Yank() {
 		return
 	}
 	e.SyncEdits(insert, e.File, e.Cursor, cursor)
-	e.Undo.Push(file.Action{Class: file.Insert, Before: e.Cursor, After: cursor, Data: r})
+	e.UndoAction.Push(file.Action{Class: file.Insert, Before: e.Cursor, After: cursor, Data: r})
 	e.Cursor = cursor
 }
 
@@ -656,13 +656,13 @@ func (e *Editor) CopyRegion() {
 	}
 }
 
-func (e *Editor) VC_Undo() {
-	if e.Undo.IsEmpty() {
+func (e *Editor) Undo() {
+	if e.UndoAction.IsEmpty() {
 		e.screen.Echo("No further undo information")
 		return
 	}
 
-	a, _ := e.Undo.Pop()
+	a, _ := e.UndoAction.Pop()
 	if a.Class == file.Insert {
 		// verb.PP("vc_undo %v %v", a.Before, a.After)
 		e.RemoveRegion(a.Before, a.After)
@@ -685,16 +685,16 @@ func (e *Editor) VC_Undo() {
 	}
 
 	e.screen.Echo("Undo!")
-	e.Redo.Push(a)
+	e.RedoAction.Push(a)
 }
 
-func (e *Editor) VC_Redo() {
-	if e.Redo.IsEmpty() {
+func (e *Editor) Redo() {
+	if e.RedoAction.IsEmpty() {
 		e.screen.Echo("No further redo information")
 		return
 	}
 
-	a, _ := e.Redo.Pop()
+	a, _ := e.RedoAction.Pop()
 	if a.Class == file.Insert {
 		e.Insert(a.Before, a.Data)
 		e.SyncEdits(insert, e.File, a.Before, a.After)
@@ -717,7 +717,7 @@ func (e *Editor) VC_Redo() {
 	e.Cursor = a.After
 
 	e.screen.Echo("Redo!")
-	e.Undo.Push(a)
+	e.UndoAction.Push(a)
 }
 
 func (e *Editor) moveCursor(x, y int) {
@@ -931,7 +931,7 @@ func (e *Editor) SaveFile() {
 		e.screen.Echo("Wrote " + e.GetPath() + backupMessage)
 	}
 
-	e.Undo.MoveTo(e.Redo)
+	e.UndoAction.MoveTo(e.RedoAction)
 }
 
 // If an existing file is specified, it will be overwritten

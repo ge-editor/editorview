@@ -86,7 +86,7 @@ func (ag *ActionGroup) IsEmpty() bool {
 }
 
 // This bad function
-// Move Undo ActionGroup to Redo
+// Move Undo ActionGroup to RedoActionGroup
 func (undo *ActionGroup) MoveTo(redo *ActionGroup) {
 	for {
 		u, ok := undo.Pop()

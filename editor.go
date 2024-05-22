@@ -491,14 +491,18 @@ func (e *Editor) drawView() {
 		if e.Cy >= height-e.verticalThreshold {
 			e.Cy = height - e.verticalThreshold - 1
 		}
-		// cursor is above verticalThreshold
-		if e.Cy < e.verticalThreshold {
-			e.Cy = e.verticalThreshold
-		}
 
 		// cursor position
 		vl := e.vlines.GetVline(e.RowIndex)
 		logicalCX, logicalCY = vl.CursorPositionOnScreenLogicalLine(e.ColIndex)
+
+		// cursor is above verticalThreshold
+		if e.Cy < e.verticalThreshold {
+			e.Cy = e.verticalThreshold
+			if e.RowIndex+logicalCY < height && e.RowIndex+logicalCY >= e.verticalThreshold {
+				e.Cy = e.RowIndex + logicalCY
+			}
+		}
 
 		// From the cursor position to up
 		y := e.Cy - logicalCY
@@ -525,15 +529,16 @@ func (e *Editor) drawView() {
 	}
 	// Set to 0 to find search results from the beginning
 	e.drawSearchIndex = 0
-	for i := e.StartDrawRowIndex; i < e.LenRows(); i++ {
+	var i int
+	for i = e.StartDrawRowIndex; i < e.LenRows(); i++ {
 		if y >= height {
 			break
 		}
 		vl := e.vlines.GetVline(i)
 		e.DrawLine(y, i, logicalCY)
 		y += vl.LenLogicalRow()
-		// e.EndDrawRowIndex = i
 	}
+	e.EndDrawRowIndex = i
 	e.showCursor(e.Cx, e.Cy)
 
 	e.PrevDrawnY = y
