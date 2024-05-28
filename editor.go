@@ -467,16 +467,16 @@ func (e *Editor) drawView() {
 	// Whether everything can fit into TreeLeaf
 	e.StartDrawRowIndex = 0
 	isAll := false
-	if e.LenRows() <= height {
+	totalLineOnCursor := -1
+	var lcx, lcy int
+	if e.RowIndex <= height || e.LenRows() <= height {
 		isAll = true
 		sumLines := 0
 		for i := 0; i < e.LenRows(); i++ {
 			vl := e.vlines.GetVline(i)
 			if i == e.RowIndex {
-				logicalCX, logicalCY = vl.CursorPositionOnScreenLogicalLine(e.ColIndex)
-				e.Cx, e.Cy = logicalCX, logicalCY
-				e.Cy += sumLines
-				e.StartDrawLogicalIndex = e.Cy
+				lcx, lcy = vl.CursorPositionOnScreenLogicalLine(e.ColIndex)
+				totalLineOnCursor = sumLines
 			}
 			sumLines += vl.LenLogicalRow()
 			if sumLines > height {
@@ -486,7 +486,11 @@ func (e *Editor) drawView() {
 		}
 	}
 
-	if !isAll {
+	if isAll {
+		e.Cx, e.Cy = lcx, lcy
+		e.Cy += totalLineOnCursor
+		e.StartDrawLogicalIndex = e.Cy
+	} else {
 		// cursor is below verticalThreshold
 		if e.Cy >= height-e.verticalThreshold {
 			e.Cy = height - e.verticalThreshold - 1
@@ -499,8 +503,10 @@ func (e *Editor) drawView() {
 		// cursor is above verticalThreshold
 		if e.Cy < e.verticalThreshold {
 			e.Cy = e.verticalThreshold
-			if e.RowIndex+logicalCY < height && e.RowIndex+logicalCY >= e.verticalThreshold {
-				e.Cy = e.RowIndex + logicalCY
+			if totalLineOnCursor >= 0 && e.Cy > totalLineOnCursor {
+				e.Cx, e.Cy = lcx, lcy
+				e.Cy += totalLineOnCursor
+				e.StartDrawLogicalIndex = e.Cy
 			}
 		}
 
@@ -520,7 +526,7 @@ func (e *Editor) drawView() {
 			e.Cy -= y
 		}
 		e.Cx = logicalCX
-	} // if !isAll
+	}
 
 	// Draw screen
 	y := -e.StartDrawLogicalIndex
