@@ -345,7 +345,15 @@ func (ff *File) Load() error {
 	}
 
 	// Add EOF
-	row := ff.Row(ff.LenRows() - 1)
+	var row *Row
+	if ff.LenRows() > 0 {
+		row = ff.Row(ff.LenRows() - 1)
+	} else {
+		// if the file size is zero
+		r := NewRow()
+		ff.rows.append(r)
+		row = ff.Row(0)
+	}
 	if row.LenCh() > 0 && row.Ch(row.LenCh()-1) == '\n' {
 		row := NewRow()
 		row.append(define.EOF)
