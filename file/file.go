@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/ge-editor/gecore/define"
-	"github.com/ge-editor/gecore/verb"
 
 	"github.com/ge-editor/utils"
 )
@@ -21,12 +20,12 @@ type flags int8
 type linefeed int8
 
 const (
-	readonly flags = 1 << iota
-	softTab
+	READONLY flags = 1 << iota
+	SOFT_TAB
 
-	lf linefeed = 1 << iota
-	crlf
-	cr
+	LF linefeed = 1 << iota
+	CRLF
+	CR
 )
 
 type File struct {
@@ -39,7 +38,7 @@ type File struct {
 	mode    os.FileMode
 	modTime time.Time
 
-	*rows
+	rows
 	encoding string
 	linefeed
 	tabWidth int
@@ -65,7 +64,7 @@ func NewFile(rawPath string) *File {
 
 		rows:     nil,
 		encoding: "UTF-8",
-		linefeed: lf,
+		linefeed: LF,
 		tabWidth: 4,
 		flags:    0,
 
@@ -115,100 +114,85 @@ func (ff *File) init() {
 	ff.class = filepath.Ext(ff.path)
 }
 
+func (ff *File) Rows() *rows {
+	return &ff.rows
+}
+
 func (ff *File) ChangePath(path string) {
 	ff.rawPath = path
 	ff.init()
 }
 
 // No undo/redo functionality
-func (ff *File) RemoveRegion(cursor1, cursor2 Cursor) *[]rune {
+func (ff *File) RemoveRegion(cursor1, cursor2 Cursor) *[]byte {
 	return ff.removeRegion(cursor1, cursor2, true)
 }
 
 // No undo/redo functionality
-func (ff *File) GetRegion(cursor1, cursor2 Cursor) *[]rune {
+func (ff *File) GetRegion(cursor1, cursor2 Cursor) *[]byte {
 	return ff.removeRegion(cursor1, cursor2, false)
 }
 
 // No undo/redo functionality
-func (ff *File) RemoveRow(cursor1 Cursor) *[]rune {
-	row1, _ := cursor1.RowIndex, cursor1.ColIndex
-
-	rw1 := (*ff.rows)[row1]
-	if (*rw1)[rw1.LenCh()-1] == '\n' {
-		removed := make([]rune, rw1.LenCh())
-		copy(removed, *rw1)
-		*ff.rows = slices.Delete((*ff.rows), row1, row1+1)
-		return &removed
-	} else { // EOF
-		removed := make([]rune, rw1.LenCh()-1)
-		copy(removed, (*rw1)[:rw1.LenCh()-1])
-		*rw1 = (*rw1)[rw1.LenCh()-1:] // EOF only
-		return &removed
-	}
-}
-
-// No undo/redo functionality
-func (ff *File) removeRegion(cursor1, cursor2 Cursor, remove bool) *[]rune {
+func (ff *File) removeRegion(cursor1, cursor2 Cursor, doRemove bool) *[]byte {
 	row1, col1 := cursor1.RowIndex, cursor1.ColIndex
 	row2, col2 := cursor2.RowIndex, cursor2.ColIndex
 
 	// Checked row index. The start position of the region is after the end position, or the end position is beyond the last line
-	if row1 > row2 || row2 > ff.LenRows()-1 {
+	if row1 > row2 || row2 > ff.rows.RowLength()-1 {
+		return nil
+	}
+	if row1 == row2 && col1 >= col2 {
 		return nil
 	}
 
-	rw1 := (*ff.rows)[row1]
+	rw1 := &ff.rows[row1]
 	// Checked col index. The start position of the region is the right of linefeed or EOF
-	if col1 > rw1.LenCh()-1 {
+	if col1 > len(*rw1)-1 {
 		return nil
 	}
 
-	rw2 := (*ff.rows)[row2]
+	rw2 := &ff.rows[row2]
 	// Checked col index. The end position of the region is the right of linefeed or EOF
-	if col2 > rw2.LenCh()-1 {
+	if col2 > len(*rw2)-1 {
 		return nil
 	}
 
 	if row1 == row2 {
-		if col1 == col2 {
-			// The start and end positions of the region are the same.
-			return nil
-		}
-		removed := make([]rune, col2-col1)
+		removed := make([]byte, col2-col1)
 		copy(removed, (*rw1)[col1:col2])
-		if remove {
+		if doRemove {
 			*rw1 = slices.Delete(*rw1, col1, col2)
 		}
 		return &removed
 	}
 
-	// Compute cap
-	removed := make([]rune, 0, func() int {
+	// Compute cap and allocate
+	removed := make([]byte, 0, func() int {
 		total := len((*rw1)[col1:]) // first row
 		for i := row1 + 1; i < row2; i++ {
-			total += (*ff.rows)[i].LenCh() // middle row
+			total += len(ff.rows[i]) // middle row
 		}
 		total += len((*rw2)[:col2]) // last row
 		return total
 	}())
 	// first row
 	removed = append(removed, (*rw1)[col1:]...)
-	if remove {
+	if doRemove {
 		*rw1 = (*rw1)[:col1]
 	}
 	// middle rows
 	for i := row1 + 1; i < row2; i++ {
-		removed = append(removed, *(*ff.rows)[i]...)
+		removed = append(removed, ff.rows[i]...)
 	}
 	// last row
 	removed = append(removed, (*rw2)[:col2]...)
 	// Remove middle and last rows
-	if remove {
+	if doRemove {
 		*rw1 = append(*rw1, (*rw2)[col2:]...)
 		// if (row2+1)-(row1+1) > 0 {
 		if row2-row1 > 0 {
-			*ff.rows = slices.Delete((*ff.rows), row1+1, row2+1)
+			ff.rows = slices.Delete(ff.rows, row1+1, row2+1)
 		}
 	}
 	return &removed
@@ -235,83 +219,34 @@ func Split(s []rune, sep rune) (r [][]rune) {
 	return
 }
 
-// Return row,col,
-// No undo/redo functionality
-func (ff *File) Insert(cursor Cursor, s []rune) (Cursor, bool) {
-	rowsLen := ff.LenRows()
-	if cursor.RowIndex > rowsLen-1 {
-		verb.PP("row index is beyond the last line")
-		return cursor, false
-	}
-
-	lines := Split(s, '\n')
-	for _, line := range lines {
-		if line[len(line)-1] == '\n' {
-			//verb.PP("1")
-			rw := (*ff.rows).Row(cursor.RowIndex)
-			carryOverLen := rw.LenCh() - cursor.ColIndex
-			if !ff.insertRunes(cursor, line) {
-				return cursor, false
-			}
-			if carryOverLen > 0 {
-				pushLine := make(Row, carryOverLen)
-				copy(pushLine, (*rw)[cursor.ColIndex+len(line):])
-				ff.insertRows(cursor.RowIndex+1, rows{&pushLine})
-			}
-			*rw = (*rw)[:cursor.ColIndex+len(line)]
-
-			cursor.RowIndex++
-			cursor.ColIndex = 0
-		} else {
-			if !ff.insertRunes(cursor, line) {
-				return cursor, false
-			}
-			cursor.ColIndex += len(line)
+// SplitByLF split s []byte by lf
+// lf is not deleted
+func SplitByLF(s []byte) (results [][]byte) {
+	for {
+		if len(s) == 0 {
+			break
 		}
 
-	}
-	return cursor, true
-}
-
-func (ff *File) insertRows(rowIndex int, rw rows) {
-	/*
-		if rowIndex > m.LenRows()-1 {
-			// row index is beyond the last line
-			return false
+		i := slices.Index(s, '\n')
+		if i == -1 {
+			results = append(results, s)
+			break
 		}
-	*/
 
-	*ff.rows = slices.Insert(*ff.rows, rowIndex, rw...)
-}
-
-func (ff *File) insertRunes(cursor Cursor, s []rune) bool {
-	rowsLen := ff.LenRows()
-	if cursor.RowIndex > rowsLen-1 {
-		// row index is beyond the last line
-		return false
+		i += 1 // including separator
+		results = append(results, s[:i])
+		s = s[i:]
 	}
-
-	rw := (*ff.rows)[cursor.RowIndex]
-	rowLen := rw.LenCh()
-	if cursor.ColIndex > rowLen-1 {
-		// col index is the right of linefeed or EOF
-		return false
-	}
-
-	*rw = slices.Insert(*rw, cursor.ColIndex, s...)
-	return true
+	return
 }
 
 // New file
 func (ff *File) New() error {
-	ff.rows = NewRows()
-	row := NewRow()
-	// Add EOF
-	row.append(define.EOF)
-	ff.rows.append(row)
-	// Set linefeed type
-	ff.linefeed = lf
+	ff.rows.New()
+	ff.rows.AddRow([]byte{define.EOF})
 
+	// Set linefeed type
+	ff.linefeed = LF
 	// m.rows.Dump()
 	return nil
 }
@@ -332,89 +267,147 @@ func (ff *File) Load() error {
 	scanLines := newScanLines(ff.encoding)
 	scanner := bufio.NewScanner(fp)
 	scanner.Split(scanLines.scanLines)
-	ff.rows = NewRows()
+	// ff.rows__ = NewRows()
+	//
+	ff.rows.New()
 	for scanner.Scan() {
-		row := NewRow()
 		line := scanner.Bytes() // Not reallocate
-		row.bytes(line)
-		ff.rows.append(row)
+
+		//row := NewRow()
+		//row.bytes(line)
+		//ff.rows__.append(row)
+
+		// allocate to buffer
+		b := make([]byte, 0, len(line))
+		b = append(b, line...)
+		ff.rows.AddRow(b)
 	}
 	err = scanner.Err()
 	if err != nil && err != io.EOF {
 		return err
 	}
 
-	// Add EOF
-	var row *Row
-	if ff.LenRows() > 0 {
-		row = ff.Row(ff.LenRows() - 1)
+	// var row *Row__
+	// if the file size is zero
+	// if ff.LenRows__() == 0 {
+	if ff.rows.RowLength() == 0 {
+		//row = NewRow()
+		//ff.rows__.append(row)
+
+		ff.rows.AddRow([]byte{define.EOF})
 	} else {
-		// if the file size is zero
-		r := NewRow()
-		ff.rows.append(r)
-		row = ff.Row(0)
+		// row = ff.Row__(ff.Rows__().LenRows__() - 1)
+		//
+		linesIndex := ff.rows.RowLength() - 1
+		lineIndex, _ := ff.rows.GetColLength(linesIndex)
+		if ch, _, _ := ff.rows.DecodeRune(linesIndex, lineIndex-1); ch == '\n' {
+			ff.rows.AddRow([]byte{define.EOF})
+		} else {
+			ff.rows.AddToRow(linesIndex, []byte{define.EOF})
+		}
 	}
-	if row.LenCh() > 0 && row.Ch(row.LenCh()-1) == '\n' {
-		row := NewRow()
+	/*
+		if row.LenCh__() > 0 && row.Ch__(row.LenCh__()-1) == '\n' {
+			// Add EOF
+			// if row.LenCh() > 0 && row.Ch(row.LenCh()-1) == '\n' {
+			row = NewRow()
+			ff.rows__.append(row)
+		}
 		row.append(define.EOF)
-		ff.rows.append(row)
-	} else {
-		row.append(define.EOF)
-	}
+	*/
+	// verb.PP("%d,%d", linesIndex, lineIndex-1)
 
 	// Set linefeed type
-	ff.linefeed = []linefeed{lf, crlf, cr}[utils.MaxValueIndex([]int{scanLines.countLF, scanLines.countCRLF, scanLines.countCR})]
+	ff.linefeed = []linefeed{LF, CRLF, CR}[utils.MaxValueIndex([]int{scanLines.countLF, scanLines.countCRLF, scanLines.countCR})]
 
+	// dump
+	/*
+		lines := ff.bows
+		for i := 0; i < lines.Length(); i++ {
+			s, _ := lines.String(i)
+			//panic(s)
+			verb.PP("%d %s", i, s)
+		}
+	*/
 	// m.rows.Dump()
 	return nil
 }
-
 func (ff *File) Save() error {
-	sb := strings.Builder{}
+	var sb strings.Builder // Consider using strings.Builder for potential performance gains
 
-	var linefeed []rune
-	if ff.linefeed&lf > 0 {
-		linefeed = []rune{'\n'}
-	} else if ff.linefeed&crlf > 0 {
-		linefeed = []rune{'\r', '\n'}
-	} else { // cr
-		linefeed = []rune{'\r'}
-	}
-	restoreLineFeed := func() {
-		for _, ch := range linefeed {
-			sb.WriteRune(ch)
-		}
+	linefeed := []byte{'\n'} // Default to LF
+	if ff.linefeed&CRLF > 0 {
+		linefeed = []byte{'\r', '\n'}
+	} else if ff.linefeed&CR > 0 {
+		linefeed = []byte{'\r'}
 	}
 
-	lastIndex := ff.LenRows() - 1
-	for i, row := range *ff.rows {
+	lastRowIndex := ff.rows.RowLength() - 1
+	for i, row := range *ff.Rows() {
 		if row == nil {
 			return fmt.Errorf("row is nothing")
 		}
-		lineBufferLen := row.LenCh()
-		for j := 0; j < lineBufferLen; j++ {
-			ch := row.Ch(j)
-			if j == lineBufferLen-1 { // end of line
-				if ch == define.LF {
-					restoreLineFeed()
-					continue
-				} else if ch == define.EOF && i == lastIndex {
-					// Skip EOF mark
-					break
-				}
-			}
-			sb.WriteRune(ch)
+		lineBufferLen, _ := ff.rows.GetColLength(i)
+		if i == lastRowIndex && row[lineBufferLen-1] == define.EOF {
+			// skip EOF mark
+			sb.Write(row[:lineBufferLen-1])
+			break
+		} else if row[lineBufferLen-1] == define.LF {
+			sb.Write(row[:lineBufferLen-1]) // skip linefeed and
+			sb.Write(linefeed)              // append
+		} else {
+			sb.Write(row[:lineBufferLen])
 		}
 	}
 
-	err := os.WriteFile(ff.path, []byte(sb.String()), 0644)
-	/*
+	return os.WriteFile(ff.path, []byte(sb.String()), 0644)
+}
+
+/*
+func (ff *File) Save2() error {
+	// sb := strings.Builder{}
+	sb := bytes.Buffer{}
+
+	var linefeed []byte
+	if ff.linefeed&lf > 0 {
+		linefeed = []byte{'\n'}
+	} else if ff.linefeed&crlf > 0 {
+		linefeed = []byte{'\r', '\n'}
+	} else { // cr
+		linefeed = []byte{'\r'}
+	}
+
+	// 3. メモリ上の占有領域 (概算)
+	// fmt.Println("メモリ上の占有領域 (概算):", runtime.Sizeof(data))
+	// sb.Grow(int(unsafe.Sizeof(ff.bows)))
+	lastRowIndex := ff.lines.RowLength() - 1
+	for i, row := range *ff.Lines() {
+		if row == nil {
+			return fmt.Errorf("row is nothing")
+		}
+		lineBufferLen, _ := ff.lines.GetColLength(i)
+		index := lineBufferLen
+		if i == lastRowIndex && row[index] == define.EOF {
+			index-- // skip EOF mark
+		}
+		if row[index-1] == define.LF {
+			sb.Write(row[:index-1])
+			sb.Write(linefeed)
+		} else {
+			sb.Write(row[:index])
+		}
+	}
+
+	// err := os.WriteFile(ff.path, []byte(sb.String()), 0644)
+	err := os.WriteFile(ff.path, sb.Bytes(), 0644)
+	/
 		if err == nil {
 			ff.flags ^= dirty
 		}
-	*/
+	/
 	return err
 }
+*/
 
 // would like to consider other formats such as dates.
 func (ff *File) Backup() error {
@@ -452,23 +445,15 @@ func (ff *File) GetClass() string {
 	return ff.class
 }
 
-func (ff *File) Rows() *rows {
-	return ff.rows
-}
-
-func (ff *File) Row(rowIndex int) *Row {
-	return (*ff.rows)[rowIndex]
-}
-
 func (ff *File) GetEncoding() string {
 	return ff.encoding
 }
 
 func (ff *File) GetLinefeed() string {
-	if ff.linefeed&lf > 0 {
+	if ff.linefeed&LF > 0 {
 		return "LF"
 	}
-	if ff.linefeed&crlf > 0 {
+	if ff.linefeed&CRLF > 0 {
 		return "CRLF"
 	}
 	return "CR"
@@ -482,14 +467,14 @@ func (ff *File) GetTabWidth() int {
 
 func (ff *File) SetReadonly(b bool) {
 	if b {
-		ff.flags |= readonly
+		ff.flags |= READONLY
 	} else {
-		ff.flags &= ^readonly
+		ff.flags &= ^READONLY
 	}
 }
 
 func (ff *File) IsReadonly() bool {
-	return ff.flags&readonly > 0
+	return ff.flags&READONLY > 0
 }
 
 /*
@@ -508,12 +493,12 @@ func (ff *File) IsDirtyFlag() bool {
 
 func (ff *File) SetSoftTab(b bool) {
 	if b {
-		ff.flags |= softTab
+		ff.flags |= SOFT_TAB
 	} else {
-		ff.flags &= ^softTab
+		ff.flags &= ^SOFT_TAB
 	}
 }
 
 func (ff *File) IsSoftTab() bool {
-	return ff.flags&softTab > 0
+	return ff.flags&SOFT_TAB > 0
 }

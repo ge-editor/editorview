@@ -1,7 +1,7 @@
 package file
 
 import (
-	"slices"
+	"github.com/ge-editor/utils"
 )
 
 //----------------------------------------------------------------------------
@@ -14,17 +14,17 @@ import (
 type ActionClass int
 
 const (
-	Insert ActionClass = iota
-	Delete
-	DeleteBackward
-	ActionSeparator
+	INSERT ActionClass = iota
+	DELETE
+	DELETE_BACKWARD
+	ACTION_SEPARATOR
 )
 
 type Action struct {
 	Class  ActionClass
 	Before Cursor
 	After  Cursor
-	Data   []rune
+	Data   []byte
 }
 
 //----------------------------------------------------------------------------
@@ -51,19 +51,23 @@ func (ag *ActionGroup) Push(a Action) {
 	// the same as the last action (same class and cursor position),
 	// update the last action.
 	lastIndex := len(*ag) - 1
-	if lastIndex != -1 && // exists and same action?
-		(*ag)[lastIndex].Class == a.Class &&
-		(*ag)[lastIndex].After.Equals(a.Before) {
-
-		if a.Class == DeleteBackward {
-			slices.Reverse(a.Data) // Reverse
+	// Is last action same action?
+	if lastIndex >= 0 && (*ag)[lastIndex].Class == a.Class {
+		if a.Class == DELETE_BACKWARD && (*ag)[lastIndex].After.Equals(a.Before) {
+			utils.ReverseUTF8Bytes(a.Data)
 			(*ag)[lastIndex].Data = append(a.Data, (*ag)[lastIndex].Data...)
+			// (*ag)[lastIndex].Data = append(append(make([]byte, 0, len(a.Data)+len((*ag)[lastIndex].Data)), a.Data...), (*ag)[lastIndex].Data...)
 			(*ag)[lastIndex].After = a.After
-		} else { // Delete, Insert
+			return
+		} else if a.Class == INSERT && (*ag)[lastIndex].After.Equals(a.Before) {
 			(*ag)[lastIndex].Data = append((*ag)[lastIndex].Data, a.Data...)
 			(*ag)[lastIndex].After = a.After
+			return
+		} else if a.Class == DELETE && (*ag)[lastIndex].After.Equals(a.Before) {
+			(*ag)[lastIndex].Data = append((*ag)[lastIndex].Data, a.Data...)
+			(*ag)[lastIndex].After = a.After
+			return
 		}
-		return
 	}
 
 	// Add the new action
@@ -77,7 +81,7 @@ func (ag *ActionGroup) Pop() (lastAction Action, _ bool) {
 	}
 	lastIndex := len((*ag)) - 1
 	lastAction = (*ag)[lastIndex]
-	(*ag) = (*ag)[:lastIndex] // remove last action
+	*ag = (*ag)[:lastIndex] // remove last action
 	return lastAction, true
 }
 
@@ -94,15 +98,15 @@ func (undo *ActionGroup) MoveTo(redo *ActionGroup) {
 			break
 		}
 		switch u.Class {
-		case Insert:
-			u.Class = DeleteBackward
+		case INSERT:
+			u.Class = DELETE_BACKWARD
 			a := u.After
 			u.After = u.Before
 			u.Before = a
-		case Delete:
-			u.Class = Insert
-		case DeleteBackward:
-			u.Class = Insert
+		case DELETE:
+			u.Class = INSERT
+		case DELETE_BACKWARD:
+			u.Class = INSERT
 			a := u.After
 			u.After = u.Before
 			u.Before = a

@@ -131,6 +131,9 @@ func (bss *BufferSets) Remove(filePath string) {
 }
 */
 
+// Remove bufferSet match *file.File in BufferSets.
+// Return removed index of bufferSet in BufferSets.
+// Return -1 if not match.
 func (bss *BufferSets) RemoveByBufferFile(ff *file.File) int {
 	i := bss.GetIndexByBufferFile(ff)
 	if i == -1 {
@@ -138,12 +141,6 @@ func (bss *BufferSets) RemoveByBufferFile(ff *file.File) int {
 	}
 
 	*bss = slices.Delete(*bss, i, i+1)
-
-	/*
-		copy((*bss)[i:], (*bss)[i+1:])
-		(*bss)[len(*bss)-1] = nil //
-		*bss = (*bss)[:len(*bss)-1]
-	*/
 	return i
 }
 
