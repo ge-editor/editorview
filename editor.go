@@ -261,74 +261,8 @@ const (
 	DELETE
 )
 
-// Synchronize edits to other buffers
-//
-// Synchronize cursor position and vline:
-//   - BufferSets.metas[*].Cursor
-//   - Editor.Cursor
-//   - Editor.vlines
-/*
-func (e *Editor) syncCursorAndBufferForEdit(sync syncType, ff *file.File, start, end file.Cursor) {
-	// Swap
-	if start.RowIndex > end.RowIndex || (start.RowIndex == end.RowIndex && start.ColIndex > end.ColIndex) {
-		start, end = end, start
-	}
-
-	// Synchronize cursor position
-	for _, buffSet := range *BufferSets {
-		// Find an edit file buffSet.
-		if buffSet.File != ff {
-			// buffSet.File is different from the edit file.
-			continue
-		}
-		for _, meta := range buffSet.GetMetas() {
-			switch sync {
-			case INSERT:
-				meta.Cursor = adjustCursorForInsertion(meta.Cursor, start, end)
-			case DELETE:
-				meta.Cursor = adjustCursorForDeletion(meta.Cursor, start, end)
-			}
-		}
-		break
-	}
-
-	// Synchronize other buffers
-	leaves := tree.GetLeavesByViewName("te")
-	for _, leaf := range leaves {
-		editor := (*leaf).(*Editor)
-		if editor.File != ff || editor == e {
-			// Not a terget File // or Active editor
-			continue
-		}
-
-		switch sync {
-		case INSERT:
-			editor.Cursor = adjustCursorForInsertion(editor.Cursor, start, end)
-
-			//editor.makeAvailableBoundariesArray(start.RowIndex)
-			if end.RowIndex-start.RowIndex > 0 {
-				editor.bsArray.Insert(start.RowIndex+1, end.RowIndex-(start.RowIndex+1))
-			}
-			// e.vlines.Release__(start.RowIndex, start.RowIndex+1) // first line
-			// e.vlines.Insert__(start.RowIndex+1, end.RowIndex)
-		case DELETE:
-			editor.Cursor = adjustCursorForDeletion(editor.Cursor, start, end)
-
-			//editor.makeAvailableBoundariesArray(start.RowIndex)
-			if count := end.RowIndex - start.RowIndex; count > 0 {
-				editor.bsArray.Delete(start.RowIndex+1, count)
-			}
-			// editor.bsayDelete(start.RowIndex+1, end.RowIndex+1)
-			// e.vlines.Release__(start.RowIndex, start.RowIndex+1) // first line
-			// e.vlines.Delete__(start.RowIndex+1, end.RowIndex)
-		}
-		// editor.vlines.Release__(start.RowIndex, -1)
-	}
-}
-*/
-
 // syncEdits adjusts cursor positions and buffer boundaries based on the type of edit (insert or delete).
-func (e *Editor) syncCursorAndBufferForEdit(sync syncType /* ff *file.File, */, start, end file.Cursor) {
+func (e *Editor) syncCursorAndBufferForEdit(sync syncType, start, end file.Cursor) {
 	// Ensure start is before end; swap if necessary.
 	if start.RowIndex > end.RowIndex || (start.RowIndex == end.RowIndex && start.ColIndex > end.ColIndex) {
 		start, end = end, start
@@ -896,21 +830,12 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 
 // Returns the screen position of the cursor corresponding to the specified column index in logical rows.
 func (e *Editor) cursorPositionOnScreenLogicalRow(rowIndex, colIndex int) (lx, ly int) {
-	// if rowIndex >= len(e.bsay) {
 	if rowIndex >= e.bsArray.Len() {
 		verb.PP("lx,ly %d,%d", -1, -1)
 		return -1, -1
 	}
-	// bs := e.bsay[rowIndex]
-	// bs := e.bsay.Boundaries(rowIndex)
-	// verb.PP("rowIndex %d, bs %#v", rowIndex, bs)
-	// for ly = 0; ly < len(bs); ly++ {
-	// for ly = 0; ly < bs.Len(); ly++ {
 	for ly = 0; ly < e.bsArray.BoundariesLen(rowIndex); ly++ {
-		// if colIndex >= bs[ly].startIndex && colIndex < bs[ly].stopIndex {
-		//if colIndex >= bs[ly].StartIndex && colIndex < bs[ly].StopIndex {
 		if colIndex >= e.bsArray.Boundary(rowIndex, ly).StartIndex && colIndex < e.bsArray.Boundary(rowIndex, ly).StopIndex {
-			// for i := bs[ly].startIndex; i < colIndex; {
 			for i := e.bsArray.Boundary(rowIndex, ly).StartIndex; i < colIndex; {
 				ch, size, _ := e.Rows().DecodeRune(rowIndex, i)
 				w, _ := e.runeWidth(ch, rowIndex, i)

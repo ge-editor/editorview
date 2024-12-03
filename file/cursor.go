@@ -9,37 +9,6 @@ func (c Cursor) Equals(other Cursor) bool {
 	return c.RowIndex == other.RowIndex && c.ColIndex == other.ColIndex
 }
 
-/*
-func adjustCursorForDeletion_00(current, start, end file.Cursor) file.Cursor {
-	// No need to update since the change is after the cursor row
-	if current.RowIndex < start.RowIndex {
-		return current
-	}
-
-	// Same row as cursor
-	if current.RowIndex == start.RowIndex {
-		// Since the change is after the cursor, leave it as is
-		if current.ColIndex < start.ColIndex {
-			return current
-		}
-		// Change only within the cursor line
-		current.ColIndex = start.ColIndex
-		return current
-	}
-
-	if current.RowIndex > end.RowIndex {
-		current.RowIndex -= end.RowIndex - start.RowIndex
-		return current
-	}
-
-	// if current.RowIndex <= end.RowIndex {
-	current.RowIndex = start.RowIndex
-	current.ColIndex = start.ColIndex // - 1
-	return current
-	// }
-}
-*/
-
 // adjustCursorForDeletion updates the cursor position to reflect the deleted text within the buffer.
 func (c *Cursor) AdjustForDeletion(deleteStart, deleteEnd Cursor) {
 	// If the cursor is before the deletion row, no adjustment is needed.
@@ -71,39 +40,6 @@ func (c *Cursor) AdjustForDeletion(deleteStart, deleteEnd Cursor) {
 	c.ColIndex = deleteStart.ColIndex
 	//return
 }
-
-/*
-// Increments the cursor position to synchronize with the modified buffer.
-func adjustCursorForInsertion_00(current, start, end file.Cursor) file.Cursor {
-	// No need to update since the change is after the cursor row
-	if current.RowIndex < start.RowIndex {
-		return current
-	}
-
-	rowLen := end.RowIndex - start.RowIndex
-
-	// Same row as cursor
-	if current.RowIndex == start.RowIndex {
-		// No need to change as it is added after the cursor
-		if current.ColIndex < start.ColIndex {
-			return current
-		}
-		// Change only within the cursor line
-		if rowLen == 0 {
-			current.ColIndex += end.ColIndex - start.ColIndex
-			return current
-		}
-		current.ColIndex = current.ColIndex - start.ColIndex + end.ColIndex
-		current.RowIndex += rowLen
-		return current
-	}
-
-	// if current.RowIndex > start.RowIndex {
-	current.RowIndex += rowLen
-	return current
-	// }
-}
-*/
 
 // adjustCursorForInsertion updates the cursor position to reflect the inserted text within the buffer.
 func (c *Cursor) AdjustForInsertion(insertStart, insertEnd Cursor) {

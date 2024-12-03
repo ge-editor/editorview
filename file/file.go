@@ -363,52 +363,6 @@ func (ff *File) Save() error {
 	return os.WriteFile(ff.path, []byte(sb.String()), 0644)
 }
 
-/*
-func (ff *File) Save2() error {
-	// sb := strings.Builder{}
-	sb := bytes.Buffer{}
-
-	var linefeed []byte
-	if ff.linefeed&lf > 0 {
-		linefeed = []byte{'\n'}
-	} else if ff.linefeed&crlf > 0 {
-		linefeed = []byte{'\r', '\n'}
-	} else { // cr
-		linefeed = []byte{'\r'}
-	}
-
-	// 3. メモリ上の占有領域 (概算)
-	// fmt.Println("メモリ上の占有領域 (概算):", runtime.Sizeof(data))
-	// sb.Grow(int(unsafe.Sizeof(ff.bows)))
-	lastRowIndex := ff.lines.RowLength() - 1
-	for i, row := range *ff.Lines() {
-		if row == nil {
-			return fmt.Errorf("row is nothing")
-		}
-		lineBufferLen, _ := ff.lines.GetColLength(i)
-		index := lineBufferLen
-		if i == lastRowIndex && row[index] == define.EOF {
-			index-- // skip EOF mark
-		}
-		if row[index-1] == define.LF {
-			sb.Write(row[:index-1])
-			sb.Write(linefeed)
-		} else {
-			sb.Write(row[:index])
-		}
-	}
-
-	// err := os.WriteFile(ff.path, []byte(sb.String()), 0644)
-	err := os.WriteFile(ff.path, sb.Bytes(), 0644)
-	/
-		if err == nil {
-			ff.flags ^= dirty
-		}
-	/
-	return err
-}
-*/
-
 // would like to consider other formats such as dates.
 func (ff *File) Backup() error {
 	for i := 1; i < 1_000_000; i++ {
