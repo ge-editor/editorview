@@ -292,7 +292,23 @@ func (e *Editor) syncCursorAndBufferForEdit(sync syncType, start, end file.Curso
 	for _, leaf := range leaves {
 		editor := (*leaf).(*Editor)
 		// Skip if the editor is linked to a different file or is the current editor.
-		if editor.File != e.File || editor == e {
+		if editor.File != e.File {
+			continue
+		}
+		// Adjust foundIndex that is results of search and replace
+		for i := 0; i < len(editor.foundIndexes); i++ {
+			verb.PP("fc1 %v", editor.foundIndexes[i])
+			switch sync {
+			case INSERT:
+				editor.foundIndexes[i].start.AdjustForInsertion(start, end)
+				editor.foundIndexes[i].stop.AdjustForInsertion(start, end)
+			case DELETE:
+				editor.foundIndexes[i].start.AdjustForDeletion(start, end)
+				editor.foundIndexes[i].stop.AdjustForDeletion(start, end)
+			}
+			verb.PP("fc2 %v", editor.foundIndexes[i])
+		}
+		if editor == e {
 			continue
 		}
 
@@ -594,35 +610,65 @@ func isBreakpoint(p2, p1, c cell) bool {
 		(!is(p1.class, screen.PROHIBITED) && !is(c.class, screen.PROHIBITED)) && (!is(p1.class, c.class) || p1.width != c.width)
 }
 
-// Handling of prohibited characters
-// If enabled, set it in the breakpoint variable
-// Check if it is a valid logical line break position and set it to bo *boundary if it is valid
-//
-//   - wordWrapThreshold: Set the calculation range to how many cells from the right edge of the screen
-//   - Index:
-//   - p2: two cells before c
-//   - p1: cell before c
-//   - c: cell at index position
-//   - logical: information about the logical rows calculated so far
-/*
-func (bo *boundary) validNewlinePosition(wordWrapThreshold, bytes, index int, p2, p1, c cell, logical boundary) {
-	if logical.Widths+c.Width < wordWrapThreshold { //* || p2.IsEmpty() || p1.IsEmpty() || c.IsEmpty() {
-		return
-	}
-
-	is := func(class screen.CharClass, flag screen.CharClass) bool {
-		return class&flag > 0
-	}
-
-	if ((is(p2.Class, screen.PROHIBITED) && is(p1.Class, screen.PROHIBITED) && is(c.Class, screen.PROHIBITED)) ||
-		(is(p1.Class, screen.PROHIBITED) && !is(c.Class, screen.PROHIBITED) && !((is(p2.Class, screen.NUMBER) && !is(p2.Class, screen.WIDECHAR)) && is(p1.Class, screen.DECIMAL_SEPARATOR) && (is(c.Class, screen.NUMBER) && !is(c.Class, screen.WIDECHAR))))) ||
-		(!is(p1.Class, screen.PROHIBITED) && !is(c.Class, screen.PROHIBITED)) && (!is(p1.Class, c.Class) || p1.Width != c.Width) {
-		bo.Bytes, bo.Index, bo.Widths = bytes, index, logical.Widths
-		// bo.index, bo.widths = logical.index, logical.widths // no good
-		// bo.index, bo.widths = index, logical.widths // good
-	}
+type Number interface {
+	int | int32 | int64 | float32 | float64
 }
-*/
+
+// isCursorInRange2 checks if the cursor position (row, col) is within the range
+// defined by the top-left (row1, col1) and bottom-right (row2, col2) corners.
+// It returns:
+//
+//	-1 if the cursor is before the range,
+//	 1 if the cursor is after the range,
+//	 0 if the cursor is within the range.
+func isCursorInRange[T Number](row, col, row1, col1, row2, col2 T) T {
+	// Handle cases where the range is reversed (either vertically or horizontally)
+	if row1 > row2 {
+		row1, row2 = row2, row1
+		col1, col2 = col2, col1
+	} else if row1 == row2 && col1 > col2 {
+		col1, col2 = col2, col1
+	}
+
+	// If the row is outside the range, return false
+	if row < row1 {
+		return -1
+	}
+	if row > row2 {
+		return 1
+	}
+
+	// If the range is within a single row (row1 == row2)
+	if row1 == row2 {
+		if col < col1 {
+			return -1
+		}
+		if col >= col2 {
+			return 1
+		}
+		return 0
+	}
+
+	// If the cursor is on the starting row (row == row1), check the column range
+	if row == row1 {
+		if col < col1 {
+			return -1
+		}
+		return 0
+	}
+
+	// If the cursor is on the ending row (row == row2), check the column range
+	if row == row2 {
+		if col >= col2 {
+			return 1
+		}
+		return 0
+	}
+
+	// If the cursor is on a row between the starting and ending rows,
+	// it is always within the range
+	return 0
+}
 
 // compute boundary of rowIndex
 // draw one row
@@ -688,25 +734,22 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 			c.width = 2 // ^X
 			style = theme.ColorControlCode
 		}
-		// Is index in the find word
+
+		// Is index in the found word
 		if *foundPositionIndex >= 0 && *foundPositionIndex < len(e.foundIndexes) {
-			// verb.PP("rowIndex %d, i %d, found %d, %v", rowIndex, i, *foundPositionIndex, e.foundIndexes[*foundPositionIndex])
-			if rowIndex >= e.foundIndexes[*foundPositionIndex].start.RowIndex &&
-				rowIndex <= e.foundIndexes[*foundPositionIndex].stop.RowIndex {
-				if i >= e.foundIndexes[*foundPositionIndex].start.ColIndex &&
-					i < e.foundIndexes[*foundPositionIndex].stop.ColIndex {
-					if e.RowIndex == e.foundIndexes[*foundPositionIndex].start.RowIndex && e.ColIndex == e.foundIndexes[*foundPositionIndex].start.ColIndex {
-						style = theme.ColorSearchFoundOnCursor
-					} else {
-						style = theme.ColorFind
-					}
-					// verb.PP("colored")
-				} else if i >= e.foundIndexes[*foundPositionIndex].stop.ColIndex {
-					// verb.PP("3")
-					*foundPositionIndex++
+			u := isCursorInRange(rowIndex, i,
+				e.foundIndexes[*foundPositionIndex].start.RowIndex, e.foundIndexes[*foundPositionIndex].start.ColIndex,
+				e.foundIndexes[*foundPositionIndex].stop.RowIndex, e.foundIndexes[*foundPositionIndex].stop.ColIndex)
+
+			if u == 0 {
+				if isCursorInRange(e.RowIndex, e.ColIndex,
+					e.foundIndexes[*foundPositionIndex].start.RowIndex, e.foundIndexes[*foundPositionIndex].start.ColIndex,
+					e.foundIndexes[*foundPositionIndex].stop.RowIndex, e.foundIndexes[*foundPositionIndex].stop.ColIndex) == 0 {
+					style = theme.ColorSearchFoundOnCursor
+				} else {
+					style = theme.ColorFind
 				}
-			} else if rowIndex >= e.foundIndexes[*foundPositionIndex].stop.RowIndex {
-				// verb.PP("4")
+			} else if u == 1 {
 				*foundPositionIndex++
 			}
 		}
