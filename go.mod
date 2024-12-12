@@ -4,9 +4,9 @@ go 1.23.4
 
 require (
 	github.com/gdamore/tcell/v2 v2.7.4
-	github.com/ge-editor/gecore v0.0.0-20241203094337-c0157ef32b44
+	github.com/ge-editor/gecore v0.0.0-20241212060441-bdf2e5d05a68
 	github.com/ge-editor/theme v0.0.0-20241203095829-4aba4a283982
-	github.com/ge-editor/utils v0.0.0-20241203095458-38bf303eb68b
+	github.com/ge-editor/utils v0.0.0-20241212060824-c8d059a2de50
 )
 
 require (
