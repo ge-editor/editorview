@@ -53,6 +53,20 @@ func (e *Editor) SaveFile() {
 	if err != nil {
 		e.screen.Echo(err.Error() + backupMessage)
 	} else {
+		// May need adjust cursor position if formatted content
+		rowLength := e.Rows().RowLength()
+		if e.RowIndex >= rowLength {
+			e.RowIndex = rowLength - 1
+		}
+		line := (*e.Rows())[e.RowIndex]
+		colLength := len(line)
+		if e.ColIndex >= colLength {
+			// cursor on linefeed or EOF
+			e.ColIndex = colLength - 1
+		}
+		for !utf8.RuneStart(line[e.ColIndex]) && e.ColIndex > 0 {
+			e.ColIndex--
+		}
 		e.screen.Echo("Wrote " + e.GetPath() + backupMessage)
 	}
 
@@ -604,7 +618,7 @@ func (e *Editor) MoveCursorToLine(lineNumber int) {
 }
 
 func (e *Editor) InsertTab() {
-	if e.IsSoftTab() {
+	if e.SoftTab {
 		w := utils.TabWidth(e.Cx, e.GetTabWidth())
 		for i := 0; i < w; i++ {
 			// e.InsertRune__(' ')

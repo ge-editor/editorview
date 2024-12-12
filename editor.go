@@ -29,11 +29,21 @@ const (
 )
 
 var (
-	BufferSets, _ = buffer.NewBufferSets(gecore.Files)
-	Marks         = mark.NewMarks()
+	// Initialization has been moved to the newEditor function
+	// BufferSets, _ = buffer.NewBufferSets(gecore.Files)
+	BufferSets *buffer.BufferSets
+	Marks      = mark.NewMarks()
 )
 
 func newEditor() *Editor {
+	if BufferSets == nil {
+		var err error
+		BufferSets, err = buffer.NewBufferSets(gecore.Files)
+		if err != nil {
+			fmt.Println(err.Error())
+			verb.PP("%s", err.Error())
+		}
+	}
 	e := &Editor{
 		File: (*BufferSets)[0].File,
 		Meta: (*BufferSets)[0].PopMeta(),
@@ -394,7 +404,8 @@ func (e *Editor) drawModeline() {
 	}
 
 	s := fmt.Sprintf("-%s%s- %s (%d,%d) ", readonly, modified, e.GetDispPath(), e.RowIndex+1, e.ModelineCx)
-	s += fmt.Sprintf("%s %s %s", e.GetEncoding(), e.GetLinefeed(), e.GetClass())
+	// s += fmt.Sprintf("%s %s %s", e.GetEncoding(), e.GetLinefeed(), e.GetClass())
+	s += fmt.Sprintf(`%s %s "%s"`, e.GetEncoding(), e.GetLinefeed(), (*e.LangMode).Name())
 
 	// char code
 	ch, _, _ := e.Rows().DecodeRune(e.RowIndex, e.ColIndex)
@@ -684,19 +695,12 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 	isEndOfRow := rowIndex == lines.RowLength()-1
 	lineLength, ok := lines.GetColLength(rowIndex)
 	totalWidth := 0 // for compute tab stop
-	//coloringFoundPositionIndex := -2
 	if !ok {
-		panic("GetLineLength")
+		panic("GetColLength")
 	}
 
 	bo := []Boundary{}
-	// bo := make([]boundary, 0, 32)
 	startIndex := 0
-	// e.boundariesArray.resize(lines.Length())
-	// e.boundariesArray.clear(rowIndex)
-
-	// Set search found style
-	// drawSearchIndex := e.getDrawFoundPositions(rowIndex)
 
 	for i := 0; i < lineLength; {
 		isLastCh := i == lineLength-1
@@ -756,9 +760,6 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 		style = style.Underline(isUnderline())
 
 		if x+c.width >= e.editArea.Width-8 && isBreakpoint(p2, p1, c) {
-			// breakpoint = boundary{startIndex: i, stopIndex: i + c.size, width: x, totalWidth: totalWidth}
-			// breakpoint = boundary{startIndex: startIndex, stopIndex: i + c.size, width: x, totalWidth: totalWidth}
-			// breakpoint = boundary{startIndex: startIndex, stopIndex: i + c.size, width: x + c.width, totalWidth: totalWidth + c.width}
 			breakpoint = Boundary{StartIndex: startIndex, StopIndex: i /* + c.size */, Width: x /* + c.width */, TotalWidth: totalWidth /* + c.width */}
 		}
 
@@ -791,7 +792,6 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 					y++
 					x = 0
 					if draw {
-						// underline = rowIndex == e.RowIndex && cursorLogicalCY == y-n
 						style = style.Underline(isUnderline())
 						if is(c.class, screen.CONTROLCODE) {
 							e.setCell(x, y, style, ch, 1)
@@ -802,9 +802,6 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 					}
 				}
 			} else {
-				//s, _ := lines.String(rowIndex)
-				//verb.PP("loop %d: %q %v %v %v '%s'", i, ch, p2, p1, c, s)
-				// bo = append(bo, boundary{startIndex: startIndex, stopIndex: i, width: breakpoint.width, totalWidth: breakpoint.totalWidth})
 				bo = append(bo, breakpoint)
 				startIndex = breakpoint.StopIndex
 
@@ -845,27 +842,6 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 		i += c.size
 	}
 
-	// debug
-	/*
-		for i, b := range bo {
-			a := (*lines)[rowIndex][b.startIndex:b.stopIndex]
-			w := 0
-			s := 0
-			for i := b.startIndex; i < b.stopIndex; {
-				ch, size := utf8.DecodeRune((*lines)[rowIndex][i:])
-				// ch, size, _ := lines.DecodeRune(rowIndex, i)
-				if ch == '\t' {
-					w += e.specialCharWidths[rowIndex][i]
-				} else {
-					w += e.runeWidth(ch)
-				}
-				s += size
-				i += size
-			}
-			verb.PP("%d %d=%d,%d=%d %s", i, s, b.stopIndex-b.startIndex, w, b.width, string(a))
-		}
-	*/
-
 	//
 	e.bsArray.Set(rowIndex, bo)
 	return y - n
@@ -874,13 +850,16 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 // Returns the screen position of the cursor corresponding to the specified column index in logical rows.
 func (e *Editor) cursorPositionOnScreenLogicalRow(rowIndex, colIndex int) (lx, ly int) {
 	if rowIndex >= e.bsArray.Len() {
-		verb.PP("lx,ly %d,%d", -1, -1)
+		// verb.PP("lx,ly %d,%d", -1, -1)
 		return -1, -1
 	}
 	for ly = 0; ly < e.bsArray.BoundariesLen(rowIndex); ly++ {
 		if colIndex >= e.bsArray.Boundary(rowIndex, ly).StartIndex && colIndex < e.bsArray.Boundary(rowIndex, ly).StopIndex {
 			for i := e.bsArray.Boundary(rowIndex, ly).StartIndex; i < colIndex; {
-				ch, size, _ := e.Rows().DecodeRune(rowIndex, i)
+				ch, size, ok := e.Rows().DecodeRune(rowIndex, i)
+				if !ok {
+					break
+				}
 				w, _ := e.runeWidth(ch, rowIndex, i)
 				lx += w
 				i += size
@@ -889,7 +868,7 @@ func (e *Editor) cursorPositionOnScreenLogicalRow(rowIndex, colIndex int) (lx, l
 			return lx, ly
 		}
 	}
-	verb.PP("lx,ly %d,%d", -1, -1)
+	// verb.PP("lx,ly %d,%d", -1, -1)
 	return -1, -1 // overflow
 }
 

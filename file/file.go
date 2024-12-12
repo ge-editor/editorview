@@ -2,6 +2,7 @@ package file
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ge-editor/gecore/define"
+	"github.com/ge-editor/gecore/lang"
 
 	"github.com/ge-editor/utils"
 )
@@ -21,7 +23,6 @@ type linefeed int8
 
 const (
 	READONLY flags = 1 << iota
-	SOFT_TAB
 
 	LF linefeed = 1 << iota
 	CRLF
@@ -32,46 +33,56 @@ type File struct {
 	rawPath  string
 	path     string
 	base     string
+	ext      string
 	dispPath string
 
 	size    int64
 	mode    os.FileMode
 	modTime time.Time
 
+	LangMode *lang.Mode
+
 	rows
 	encoding string
 	linefeed
-	tabWidth int
-	flags    // readonly, softTab
+
+	TabWidth int
+	SoftTab  bool
+
+	flags // readonly
 
 	UndoAction *ActionGroup
 	RedoAction *ActionGroup
-
-	class string // file type string
 }
 
 // Call New() or Load() after invoking this function
 func NewFile(rawPath string) *File {
+	langMode := lang.Modes.GetMode(rawPath)
+
 	ff := &File{
 		rawPath:  rawPath,
 		path:     "",
 		base:     "",
+		ext:      filepath.Ext(rawPath),
 		dispPath: "",
 
 		size:    0,
 		mode:    fs.ModePerm,
 		modTime: time.Now(),
 
+		LangMode: langMode,
+
 		rows:     nil,
 		encoding: "UTF-8",
 		linefeed: LF,
-		tabWidth: 4,
-		flags:    0,
+
+		TabWidth: (*langMode).IndentWidth(),
+		SoftTab:  (*langMode).IsSoftTAB(),
+
+		flags: 0,
 
 		UndoAction: &ActionGroup{},
 		RedoAction: &ActionGroup{},
-
-		class: filepath.Ext(rawPath),
 	}
 	ff.init()
 	return ff
@@ -111,7 +122,7 @@ func (ff *File) init() {
 		}
 	}
 
-	ff.class = filepath.Ext(ff.path)
+	ff.ext = filepath.Ext(ff.path)
 }
 
 func (ff *File) Rows() *rows {
@@ -332,7 +343,14 @@ func (ff *File) Load() error {
 	// m.rows.Dump()
 	return nil
 }
+
+// Return error is joined errors
 func (ff *File) Save() error {
+	formattedLines, err := (*ff.LangMode).FormatBeforeSave(ff.rows)
+	if err == nil {
+		ff.rows = formattedLines
+	}
+
 	var sb strings.Builder // Consider using strings.Builder for potential performance gains
 
 	linefeed := []byte{'\n'} // Default to LF
@@ -345,7 +363,7 @@ func (ff *File) Save() error {
 	lastRowIndex := ff.rows.RowLength() - 1
 	for i, row := range *ff.Rows() {
 		if row == nil {
-			return fmt.Errorf("row is nothing")
+			return errors.Join(err, fmt.Errorf("row is nothing"))
 		}
 		lineBufferLen, _ := ff.rows.GetColLength(i)
 		if i == lastRowIndex && row[lineBufferLen-1] == define.EOF {
@@ -360,7 +378,7 @@ func (ff *File) Save() error {
 		}
 	}
 
-	return os.WriteFile(ff.path, []byte(sb.String()), 0644)
+	return errors.Join(err, os.WriteFile(ff.path, []byte(sb.String()), 0644))
 }
 
 // would like to consider other formats such as dates.
@@ -379,7 +397,7 @@ func (ff *File) Backup() error {
 func (ff *File) SetPath(path string) {
 	ff.path = path
 	ff.base = filepath.Base(path)
-	ff.class = filepath.Ext(path)
+	ff.ext = filepath.Ext(path)
 	ff.dispPath = ff.base
 }
 
@@ -396,7 +414,7 @@ func (ff *File) GetDispPath() string {
 }
 
 func (ff *File) GetClass() string {
-	return ff.class
+	return ff.ext
 }
 
 func (ff *File) GetEncoding() string {
@@ -414,7 +432,7 @@ func (ff *File) GetLinefeed() string {
 }
 
 func (ff *File) GetTabWidth() int {
-	return ff.tabWidth
+	return ff.TabWidth
 }
 
 // Flags
@@ -443,16 +461,4 @@ func (ff *File) IsReadonly() bool {
 
 func (ff *File) IsDirtyFlag() bool {
 	return !ff.UndoAction.IsEmpty()
-}
-
-func (ff *File) SetSoftTab(b bool) {
-	if b {
-		ff.flags |= SOFT_TAB
-	} else {
-		ff.flags &= ^SOFT_TAB
-	}
-}
-
-func (ff *File) IsSoftTab() bool {
-	return ff.flags&SOFT_TAB > 0
 }

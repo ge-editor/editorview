@@ -1,6 +1,8 @@
 package file
 
-import "unicode/utf8"
+import (
+	"unicode/utf8"
+)
 
 type row []byte
 
