@@ -5,6 +5,8 @@ import (
 	"slices"
 
 	"github.com/ge-editor/gecore/screen"
+
+	"github.com/ge-editor/theme"
 )
 
 type Boundary struct {
@@ -114,6 +116,6 @@ func (b *BoundariesArray) isDirty(rowIndex int) bool {
 func (b *BoundariesArray) beAvailable(rowIndex int) {
 	if b.isDirty(rowIndex) {
 		foundPositionIndex := -1 // Don't use this, dummy value for call drawLine function.
-		b.editor.drawLine(0, rowIndex, -1, false, &foundPositionIndex)
+		b.editor.drawLine(0, rowIndex, -1, false, &foundPositionIndex, nil, 0, theme.ColorDefault)
 	}
 }

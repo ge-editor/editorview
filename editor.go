@@ -3,14 +3,17 @@
 package te
 
 import (
+	"context"
 	"fmt"
 	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
+	sitter "github.com/smacker/go-tree-sitter"
 
 	"github.com/ge-editor/gecore"
 	"github.com/ge-editor/gecore/define"
 	"github.com/ge-editor/gecore/kill_buffer"
+	"github.com/ge-editor/gecore/lang"
 	"github.com/ge-editor/gecore/screen"
 	"github.com/ge-editor/gecore/tree"
 	"github.com/ge-editor/gecore/verb"
@@ -472,8 +475,25 @@ func (e *Editor) copyRegion(a, b file.Cursor) error {
 	return err
 }
 
+var events []lang.Event
+
 // Draw the screen based on Editor.currentRowIndex, logical row position logicalCY, and cursor position Editor.Cy
 func (e *Editor) drawView() {
+
+	// Tree-sitter test implementation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var tree *sitter.Tree
+
+	var err error
+	if events == nil {
+		events, tree, err = (*e.LangMode).ColorizeEvents(ctx, tree, utils.JoinBytes(*e.Rows()))
+		if err != nil {
+			verb.PP("Error: %v", err)
+		}
+	}
+	verb.PP("events: %v", events)
+
 	/*
 		lines := e.Lines()
 		for i := 0; i < lines.Length(); i++ {
@@ -508,7 +528,7 @@ func (e *Editor) drawView() {
 		sumLines := 0
 		for i := 0; i < e.Rows().RowLength(); i++ {
 			// verb.PP("loop 1")
-			e.drawLine(0, i, -1, false, &foundPositionIndex) // compute boundary
+			e.drawLine(0, i, -1, false, &foundPositionIndex, nil, 0, theme.ColorDefault) // compute boundary
 			// verb.PP("bo1 %#v", e.boundariesArray[i])
 			if i == e.RowIndex {
 				lcx, lcy = e.cursorPositionOnScreenLogicalRow(i, e.ColIndex)
@@ -535,7 +555,7 @@ func (e *Editor) drawView() {
 		}
 
 		// cursor position
-		e.drawLine(0, e.RowIndex, 0, false, &foundPositionIndex) // compute boundary
+		e.drawLine(0, e.RowIndex, 0, false, &foundPositionIndex, nil, 0, theme.ColorDefault) // compute boundary
 		logicalCX, logicalCY = e.cursorPositionOnScreenLogicalRow(e.RowIndex, e.ColIndex)
 
 		// cursor is above verticalThreshold
@@ -551,7 +571,7 @@ func (e *Editor) drawView() {
 		// From the cursor position to up
 		y := e.Cy - logicalCY
 		for i := e.RowIndex - 1; i >= 0; i-- {
-			e.drawLine(0, i, 0, false, &foundPositionIndex)
+			e.drawLine(0, i, 0, false, &foundPositionIndex, nil, 0, theme.ColorDefault)
 			// verb.PP("loop 2")
 			// vl := e.vlines.GetVline__(i)
 			// y -= vl.LenLogicalRow__()
@@ -571,6 +591,12 @@ func (e *Editor) drawView() {
 		e.Cx = logicalCX
 	}
 
+	// Tree-sitter
+	// 描画開始行以降の eventIndex を取得する
+	eventIndex, currentStyle, err := (*e.LangMode).EventIndex(ctx, e.StartDrawRowIndex, 0, *e.Rows(), events, 0)
+	if err != nil {
+		verb.PP("EventIndex error: %s", err)
+	}
 	// Draw screen
 	y := -e.StartDrawLogicalIndex
 	/* if isAll {
@@ -586,7 +612,7 @@ func (e *Editor) drawView() {
 		if y >= height || y > 10000 {
 			break
 		}
-		e.drawLine(y, i, logicalCY, true, &foundPositionIndex)
+		e.drawLine(y, i, logicalCY, true, &foundPositionIndex, events, eventIndex, currentStyle)
 		y += e.bsArray.BoundariesLen(i) // .Boundaries(i).Len()
 	}
 	e.EndDrawRowIndex = i
@@ -686,7 +712,7 @@ func isCursorInRange[T Number](row, col, row1, col1, row2, col2 T) T {
 //   - n: y position within the Leaf to draw the row
 //   - cursorLogicalCY: Logical row number where the cursor is located,
 //     If the row to draw is not the cursor row, set -1 and call
-func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPositionIndex *int) int {
+func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPositionIndex *int, events []lang.Event, eventIndex int, style tcell.Style) int {
 	// verb.PP("drawLine %d", rowIndex)
 	y, x := n, 0
 	var p2, p1, c cell
@@ -702,7 +728,19 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 	bo := []Boundary{}
 	startIndex := 0
 
+	//ctx, cancel := context.WithCancel(context.Background())
+	//defer cancel()
+	var err error
+
 	for i := 0; i < lineLength; {
+		// eventIndex, style, err = (*e.LangMode).EventIndex(ctx, rowIndex, i, *e.Rows(), events, eventIndex)
+		ss := style
+		// eventIndex, style, err = (*e.LangMode).EventIndex(ctx, rowIndex, i, *e.Rows(), events, 0)
+		if err != nil {
+			verb.PP("EventIndex error %s", err)
+			style = ss
+		}
+
 		isLastCh := i == lineLength-1
 		var ch, ch2 rune
 		ch2 = 0
@@ -717,7 +755,8 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 			return rowIndex == e.RowIndex && cursorLogicalCY == y-n
 		}
 
-		style := theme.ColorDefault
+		// style := theme.ColorDefault
+		// style = theme.ColorDefault
 
 		// Special char width
 		if ch == define.EOF && isLastCh && isEndOfRow {
