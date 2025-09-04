@@ -2,6 +2,7 @@ package file
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -12,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ge-editor/gecore"
 	"github.com/ge-editor/gecore/define"
 	"github.com/ge-editor/gecore/lang"
 
+	"github.com/ge-editor/editorview/file/rows"
 	"github.com/ge-editor/utils"
 )
 
@@ -40,14 +43,11 @@ type File struct {
 	mode    os.FileMode
 	modTime time.Time
 
-	LangMode *lang.Mode
+	langMode *lang.Mode
 
-	rows
+	*rows.RowsStruct
 	encoding string
 	linefeed
-
-	TabWidth int
-	SoftTab  bool
 
 	flags // readonly
 
@@ -70,14 +70,11 @@ func NewFile(rawPath string) *File {
 		mode:    fs.ModePerm,
 		modTime: time.Now(),
 
-		LangMode: langMode,
+		langMode: langMode,
 
-		rows:     nil,
-		encoding: "UTF-8",
-		linefeed: LF,
-
-		TabWidth: (*langMode).IndentWidth(),
-		SoftTab:  (*langMode).IsSoftTAB(),
+		RowsStruct: nil,
+		encoding:   "UTF-8",
+		linefeed:   LF,
 
 		flags: 0,
 
@@ -125,10 +122,6 @@ func (ff *File) init() {
 	ff.ext = filepath.Ext(ff.path)
 }
 
-func (ff *File) Rows() *rows {
-	return &ff.rows
-}
-
 func (ff *File) ChangePath(path string) {
 	ff.rawPath = path
 	ff.init()
@@ -144,66 +137,62 @@ func (ff *File) GetRegion(cursor1, cursor2 Cursor) *[]byte {
 	return ff.removeRegion(cursor1, cursor2, false)
 }
 
-// No undo/redo functionality
-func (ff *File) removeRegion(cursor1, cursor2 Cursor, doRemove bool) *[]byte {
-	row1, col1 := cursor1.RowIndex, cursor1.ColIndex
-	row2, col2 := cursor2.RowIndex, cursor2.ColIndex
-
+// Not within undo/redo functionality
+func (ff *File) removeRegion(start, end Cursor, doRemove bool) *[]byte {
 	// Checked row index. The start position of the region is after the end position, or the end position is beyond the last line
-	if row1 > row2 || row2 > ff.rows.RowLength()-1 {
+	if start.RowIndex > end.RowIndex || end.RowIndex >= ff.RowsLength() {
 		return nil
 	}
-	if row1 == row2 && col1 >= col2 {
+	if start.RowIndex == end.RowIndex && start.ColIndex >= end.ColIndex {
 		return nil
 	}
 
-	rw1 := &ff.rows[row1]
+	topRow := ff.Rows().Row(start.RowIndex)
 	// Checked col index. The start position of the region is the right of linefeed or EOF
-	if col1 > len(*rw1)-1 {
+	if start.ColIndex >= topRow.Length() {
 		return nil
 	}
 
-	rw2 := &ff.rows[row2]
+	bottomRow := ff.Rows().Row(end.RowIndex)
 	// Checked col index. The end position of the region is the right of linefeed or EOF
-	if col2 > len(*rw2)-1 {
+	if end.ColIndex >= bottomRow.Length() {
 		return nil
 	}
 
-	if row1 == row2 {
-		removed := make([]byte, col2-col1)
-		copy(removed, (*rw1)[col1:col2])
+	if start.RowIndex == end.RowIndex {
+		removed := topRow.SubBytes(start.ColIndex, end.ColIndex)
 		if doRemove {
-			*rw1 = slices.Delete(*rw1, col1, col2)
+			*topRow = topRow.Delete(start.ColIndex, end.ColIndex)
 		}
 		return &removed
 	}
 
 	// Compute cap and allocate
 	removed := make([]byte, 0, func() int {
-		total := len((*rw1)[col1:]) // first row
-		for i := row1 + 1; i < row2; i++ {
-			total += len(ff.rows[i]) // middle row
+		cap := topRow.Length() - start.ColIndex // top row
+		for i := start.RowIndex + 1; i < end.RowIndex; i++ {
+			cap += ff.Rows().Row(i).Length() // middle row
 		}
-		total += len((*rw2)[:col2]) // last row
-		return total
+		cap += end.ColIndex // bottom row byte size
+		return cap
 	}())
-	// first row
-	removed = append(removed, (*rw1)[col1:]...)
+
+	// top row
+	removed = append(removed, (*topRow)[start.ColIndex:]...)
 	if doRemove {
-		*rw1 = (*rw1)[:col1]
+		*topRow = (*topRow)[:start.ColIndex]
 	}
 	// middle rows
-	for i := row1 + 1; i < row2; i++ {
-		removed = append(removed, ff.rows[i]...)
+	for i := start.RowIndex + 1; i < end.RowIndex; i++ {
+		removed = append(removed, ff.Rows().Row(i).Bytes()...)
 	}
-	// last row
-	removed = append(removed, (*rw2)[:col2]...)
-	// Remove middle and last rows
+	// bottom row
+	removed = append(removed, (*bottomRow)[:end.ColIndex]...)
+	// Remove middle and bottom rows
 	if doRemove {
-		*rw1 = append(*rw1, (*rw2)[col2:]...)
-		// if (row2+1)-(row1+1) > 0 {
-		if row2-row1 > 0 {
-			ff.rows = slices.Delete(ff.rows, row1+1, row2+1)
+		*topRow = append(*topRow, (*bottomRow)[end.ColIndex:]...)
+		if end.RowIndex-start.RowIndex > 0 {
+			ff.Rows().Delete(start.RowIndex+1, end.RowIndex+1)
 		}
 	}
 	return &removed
@@ -253,8 +242,8 @@ func SplitByLF(s []byte) (results [][]byte) {
 
 // New file
 func (ff *File) New() error {
-	ff.rows.New()
-	ff.rows.AddRow([]byte{define.EOF})
+	ff.RowsStruct = rows.New()
+	ff.Rows().Add([]byte{define.EOF})
 
 	// Set linefeed type
 	ff.linefeed = LF
@@ -280,7 +269,8 @@ func (ff *File) Load() error {
 	scanner.Split(scanLines.scanLines)
 	// ff.rows__ = NewRows()
 	//
-	ff.rows.New()
+	// ff.RowsStruct.New()
+	ff.RowsStruct = rows.New()
 	for scanner.Scan() {
 		line := scanner.Bytes() // Not reallocate
 
@@ -291,7 +281,7 @@ func (ff *File) Load() error {
 		// allocate to buffer
 		b := make([]byte, 0, len(line))
 		b = append(b, line...)
-		ff.rows.AddRow(b)
+		ff.Rows().Add(b)
 	}
 	err = scanner.Err()
 	if err != nil && err != io.EOF {
@@ -301,20 +291,21 @@ func (ff *File) Load() error {
 	// var row *Row__
 	// if the file size is zero
 	// if ff.LenRows__() == 0 {
-	if ff.rows.RowLength() == 0 {
+	if ff.RowsLength() == 0 {
 		//row = NewRow()
 		//ff.rows__.append(row)
 
-		ff.rows.AddRow([]byte{define.EOF})
+		ff.Rows().Add([]byte{define.EOF})
 	} else {
 		// row = ff.Row__(ff.Rows__().LenRows__() - 1)
 		//
-		linesIndex := ff.rows.RowLength() - 1
-		lineIndex, _ := ff.rows.GetColLength(linesIndex)
-		if ch, _, _ := ff.rows.DecodeRune(linesIndex, lineIndex-1); ch == '\n' {
-			ff.rows.AddRow([]byte{define.EOF})
+		linesIndex := ff.RowsLength() - 1
+		// lineIndex, _ := ff.rows.GetColLength(linesIndex)
+		lineIndex := ff.Rows().Row(linesIndex).Length()
+		if ch, _, _ := ff.Rows().Row(linesIndex).DecodeRune(lineIndex - 1); ch == '\n' {
+			ff.Rows().Add([]byte{define.EOF})
 		} else {
-			ff.rows.AddToRow(linesIndex, []byte{define.EOF})
+			ff.Rows().Row(linesIndex).Add([]byte{define.EOF})
 		}
 	}
 	/*
@@ -344,11 +335,40 @@ func (ff *File) Load() error {
 	return nil
 }
 
+func (ff *File) SetLangMode(langMode *lang.Mode) {
+	ff.langMode = langMode
+}
+
+func (ff *File) GetLangMode() *lang.Mode {
+	return ff.langMode
+}
+
+const (
+	ErrFormatted gecore.ErrorCode = iota + 1
+	// ErrNotFormatting
+	// ErrFormattingFailed
+	ErrSaved
+	// ErrSavingFailed
+	// ErrPermissionDenied
+)
+
 // Return error is joined errors
-func (ff *File) Save() error {
-	formattedLines, err := (*ff.LangMode).FormatBeforeSave(ff.rows)
-	if err == nil {
-		ff.rows = formattedLines
+func (ff *File) Save() (results error) {
+	if (*ff.langMode).IsFormattingBeforeSave() {
+		// Combine [][]byte into a single byte slice
+		sourceBytes, _, err := utils.JoinBytes(ff.BytesArray())
+		if err != nil {
+			return err
+		}
+		// Remove EOF Mark
+		sourceBytes = sourceBytes[:len(sourceBytes)-1]
+		formatted, err := (*ff.langMode).Formatting(sourceBytes)
+		if err == nil {
+			// Add EOF Mark and split formatted source
+			formattedRows := bytes.SplitAfter(append(formatted, define.EOF), []byte("\n"))
+			ff.SetRows(formattedRows)
+			results = errors.Join(results, gecore.NewGeError(ErrFormatted, "formatted"))
+		}
 	}
 
 	var sb strings.Builder // Consider using strings.Builder for potential performance gains
@@ -360,12 +380,12 @@ func (ff *File) Save() error {
 		linefeed = []byte{'\r'}
 	}
 
-	lastRowIndex := ff.rows.RowLength() - 1
+	lastRowIndex := ff.RowsLength() - 1
 	for i, row := range *ff.Rows() {
 		if row == nil {
-			return errors.Join(err, fmt.Errorf("row is nothing"))
+			return errors.Join(results, fmt.Errorf("row is nothing"))
 		}
-		lineBufferLen, _ := ff.rows.GetColLength(i)
+		lineBufferLen := ff.Rows().Row(i).Length()
 		if i == lastRowIndex && row[lineBufferLen-1] == define.EOF {
 			// skip EOF mark
 			sb.Write(row[:lineBufferLen-1])
@@ -378,7 +398,11 @@ func (ff *File) Save() error {
 		}
 	}
 
-	return errors.Join(err, os.WriteFile(ff.path, []byte(sb.String()), 0644))
+	err := os.WriteFile(ff.path, []byte(sb.String()), 0644)
+	if err == nil {
+		err = gecore.NewGeError(ErrSaved, "saved")
+	}
+	return errors.Join(results, err)
 }
 
 // would like to consider other formats such as dates.
@@ -432,7 +456,7 @@ func (ff *File) GetLinefeed() string {
 }
 
 func (ff *File) GetTabWidth() int {
-	return ff.TabWidth
+	return (*ff.langMode).GetTabWidth()
 }
 
 // Flags

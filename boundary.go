@@ -1,4 +1,4 @@
-package te
+package editorview
 
 import (
 	"fmt"

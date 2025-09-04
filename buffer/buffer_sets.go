@@ -8,18 +8,18 @@ import (
 
 	"github.com/ge-editor/utils"
 
-	"github.com/ge-editor/te/file"
-	"github.com/ge-editor/te/pkg_error"
+	"github.com/ge-editor/editorview/file"
+	"github.com/ge-editor/editorview/pkg_error"
 )
 
-// Create te.Editor.Buffers from
+// Create editorview.Editor.Buffers from
 // Files (command line arguments)
 // Always one will be created
 //
 // # Create bufferSet and append to Buffers from path string array
 //
 // From paths (command line argument)
-// create te.Editor.Buffers
+// create editorview.Editor.Buffers
 // Create one bufferSet, even if there is none.
 func NewBufferSets(paths []string) (bss *BufferSets, errs error) {
 	bss = &BufferSets{}

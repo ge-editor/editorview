@@ -1,4 +1,4 @@
-package te
+package editorview
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/atotto/clipboard"
 
+	"github.com/ge-editor/gecore"
 	"github.com/ge-editor/gecore/define"
 	"github.com/ge-editor/gecore/kill_buffer"
 	"github.com/ge-editor/gecore/screen"
@@ -22,8 +23,8 @@ import (
 
 	"github.com/ge-editor/theme"
 
-	"github.com/ge-editor/te/file"
-	"github.com/ge-editor/te/mark"
+	"github.com/ge-editor/editorview/file"
+	"github.com/ge-editor/editorview/mark"
 )
 
 // ------------------------------------------------------------------
@@ -35,11 +36,28 @@ func (e *Editor) OpenFile(path string) error {
 	ff, meta, err := BufferSets.GetFileAndMeta(path)
 	e.File = ff
 	e.Meta = meta
-
-	// e.vlines.SetFile__(ff)
-	// e.vlines.AllocateVlines__(meta.RowIndex)
-
+	e.bsArray.ClearAll()
 	return err // return message
+}
+
+func (e *Editor) adjustFormattedCursorPosition() {
+	rows := e.Rows()
+	if e.RowIndex >= rows.Length() {
+		e.RowIndex = rows.Length() - 1
+	}
+
+	row := rows.Row(e.RowIndex)
+	i := e.ColIndex
+	if i >= row.Length() {
+		i = row.Length() - 1
+	}
+	for i > 0 {
+		if _, _, ok := row.DecodeRune(i); ok {
+			break
+		}
+		i--
+	}
+	e.ColIndex = i
 }
 
 // If the file does not exist, a backup error will occur
@@ -50,11 +68,13 @@ func (e *Editor) SaveFile() {
 	}
 
 	err := e.Save()
-	if err != nil {
-		e.screen.Echo(err.Error() + backupMessage)
-	} else {
+	if gecore.IsErrorCode(err, file.ErrSaved) {
+		if gecore.IsErrorCode(err, file.ErrFormatted) {
+			e.adjustFormattedCursorPosition()
+			e.bsArray.ClearAll()
+		}
 		// May need adjust cursor position if formatted content
-		rowLength := e.Rows().RowLength()
+		rowLength := e.Rows().Length()
 		if e.RowIndex >= rowLength {
 			e.RowIndex = rowLength - 1
 		}
@@ -68,6 +88,8 @@ func (e *Editor) SaveFile() {
 			e.ColIndex--
 		}
 		e.screen.Echo("Wrote " + e.GetPath() + backupMessage)
+	} else {
+		e.screen.Echo(err.Error() + backupMessage)
 	}
 
 	e.UndoAction.MoveTo(e.RedoAction)
@@ -89,7 +111,8 @@ func (e *Editor) MoveCursorNextWord() {
 	x, y := e.Cx, e.Cy
 
 	lines := e.Rows()
-	line, _ := lines.GetRow(e.RowIndex)
+	// line, _ := lines.GetRow(e.RowIndex)
+	line := lines.Row(e.RowIndex)
 	if line.IsColIndexAtRowEnd(e.ColIndex) {
 		if lines.IsRowIndexLastRow(e.RowIndex) {
 			e.screen.Echo("End of buffer")
@@ -105,7 +128,7 @@ func (e *Editor) MoveCursorNextWord() {
 	var prevCc, cc screen.CharClass
 	notUppercaseBit := ^screen.UPPERCASE
 	for {
-		ch, size, ok := lines.DecodeRune(e.RowIndex, e.ColIndex)
+		ch, size, ok := (*lines).Row(e.RowIndex).DecodeRune(e.ColIndex)
 		if !ok {
 			verb.PP("error")
 			panic("err")
@@ -155,7 +178,7 @@ func (e *Editor) MoveCursorPreviousWord() {
 		//lastBs := bs.LastBoundary()
 		lastBs := e.bsArray.LastBoundary(e.RowIndex)
 		// lastBs := e.bsay[e.RowIndex].boundaries[e.bsay[e.RowIndex].Len()-1]
-		ch, _, colIndex, _ := e.Rows().DecodeEndRune(e.RowIndex)
+		ch, _, colIndex, _ := e.Rows().Row(e.RowIndex).DecodeEndRune()
 		w, _ := e.runeWidth(ch, e.RowIndex, colIndex)
 		x = lastBs.Width - w  // on linefeed
 		e.ColIndex = colIndex // lastBs.stopIndex - size
@@ -168,7 +191,7 @@ func (e *Editor) MoveCursorPreviousWord() {
 			if !ok {
 				panic("1")
 			}
-			ch, _, colIndex, ok := e.Rows().DecodePrevRune(e.RowIndex, e.ColIndex)
+			ch, _, colIndex, ok := e.Rows().Row(e.RowIndex).DecodePrevRune(e.ColIndex)
 			if !ok {
 				// panic("2")
 				break
@@ -218,7 +241,8 @@ func (e *Editor) MoveCursorForward() {
 	x, y := e.Cx, e.Cy
 
 	lines := e.Rows()
-	line, _ := lines.GetRow(e.RowIndex)
+	// line, _ := lines.GetRow(e.RowIndex)
+	line := lines.Row(e.RowIndex)
 	if line.IsColIndexAtRowEnd(e.ColIndex) {
 		if lines.IsRowIndexLastRow(e.RowIndex) {
 			e.screen.Echo("End of buffer")
@@ -232,7 +256,8 @@ func (e *Editor) MoveCursorForward() {
 	} else {
 		// verb.PP("MoveCursorForward 2")
 		// bo := e.boundariesArray.GetBoundaries(e.RowIndex)
-		ch, size, ok := lines.DecodeRune(e.RowIndex, e.ColIndex)
+		// ch, size, ok := lines.DecodeRune(e.RowIndex, e.ColIndex)
+		ch, size, ok := (*lines).Row(e.RowIndex).DecodeRune(e.ColIndex)
 		if !ok {
 			verb.PP("error")
 			panic("err")
@@ -275,7 +300,7 @@ func (e *Editor) MoveCursorBackward() {
 		//lastBs := bs.LastBoundary()
 		lastBs := e.bsArray.LastBoundary(e.RowIndex)
 		// lastBs := e.bsay[e.RowIndex].boundaries[e.bsay[e.RowIndex].Len()-1]
-		ch, _, colIndex, _ := e.Rows().DecodeEndRune(e.RowIndex)
+		ch, _, colIndex, _ := e.Rows().Row(e.RowIndex).DecodeEndRune()
 		w, _ := e.runeWidth(ch, e.RowIndex, colIndex)
 		x = lastBs.Width - w  // on linefeed
 		e.ColIndex = colIndex // lastBs.stopIndex - size
@@ -285,7 +310,8 @@ func (e *Editor) MoveCursorBackward() {
 		if !ok {
 			panic("1")
 		}
-		ch, _, colIndex, ok := e.Rows().DecodePrevRune(e.RowIndex, e.ColIndex)
+		// ch, _, colIndex, ok := e.Rows().DecodePrevRune(e.RowIndex, e.ColIndex)
+		ch, _, colIndex, ok := e.Rows().Row(e.RowIndex).DecodePrevRune(e.ColIndex)
 		if !ok {
 			panic("2")
 		}
@@ -341,7 +367,7 @@ func (e *Editor) MoveCursorNextLine() {
 	x := 0
 	i := bo.StartIndex
 	for {
-		ch, size, ok := e.Rows().DecodeRune(e.RowIndex, i)
+		ch, size, ok := e.Rows().Row(e.RowIndex).DecodeRune(i)
 		if !ok {
 			panic("MoveCursorNextLine")
 		}
@@ -388,7 +414,7 @@ func (e *Editor) MoveCursorPrevLine() {
 	x := 0
 	i := bo.StartIndex
 	for {
-		ch, size, _ := e.Rows().DecodeRune(e.RowIndex, i)
+		ch, size, _ := e.Rows().Row(e.RowIndex).DecodeRune(i)
 		w, _ := e.runeWidth(ch, e.RowIndex, i)
 		if x+w > e.PrevCx || i+size >= bo.StopIndex {
 			break
@@ -407,7 +433,7 @@ func (e *Editor) MoveCursorEndOfLine() {
 	// What index number in logic row?
 	indexOfLogicalRow, _ := e.getIndexOfLogicalRow(e.RowIndex, e.ColIndex)
 
-	colLength, _ := e.Rows().GetColLength(e.RowIndex)
+	colLength := e.Rows().Row(e.RowIndex).Length()
 	e.ColIndex = colLength - 1
 
 	// cursor display position
@@ -444,20 +470,20 @@ func (e *Editor) MoveCursorEndOfLogicalLine() {
 }
 
 // Move cursor to the beginning of the line.
+// Consider indentation
 func (e *Editor) MoveCursorBeginningOfLine() {
 	if e.RowIndex == 0 && e.ColIndex == 0 {
 		e.screen.Echo("Beginning of buffer")
 		return
 	}
 
-	//e.makeAvailableBoundariesArray(e.RowIndex) // -------- !
 	nowIndexOfLogicalRow, _ := e.getIndexOfLogicalRow(e.RowIndex, e.ColIndex)
-	lines := e.Rows()
+	rows := e.Rows()
 	indentedIndex := 0
 	indentedWidth := 0
-	for indentedIndex < len((*lines)[e.RowIndex]) {
-		ch, size, _ := lines.DecodeRune(e.RowIndex, indentedIndex)
-		if ch != ' ' && ch != '\t' || indentedIndex >= e.ColIndex {
+	for indentedIndex < rows.Row(e.RowIndex).Length() {
+		ch, size, _ := rows.Row(e.RowIndex).DecodeRune(indentedIndex)
+		if ch != ' ' && ch != '\t' {
 			break
 		}
 		w, _ := e.runeWidth(ch, e.RowIndex, indentedIndex)
@@ -466,7 +492,7 @@ func (e *Editor) MoveCursorBeginningOfLine() {
 	}
 	newIndexOfLogicalRow, _ := e.getIndexOfLogicalRow(e.RowIndex, indentedIndex)
 
-	if indentedIndex < e.ColIndex {
+	if e.ColIndex == 0 || indentedIndex < e.ColIndex {
 		e.ColIndex = indentedIndex
 		e.Cx = indentedWidth
 	} else {
@@ -479,7 +505,9 @@ func (e *Editor) MoveCursorBeginningOfLine() {
 	}
 }
 
-// Move cursor to the beginning of the logical line.
+// Move cursor to the beginning of the logical row.
+// Consider logical row
+// Consider indentation....
 func (e *Editor) MoveCursorBeginningOfLogicalLine() {
 	if e.RowIndex == 0 && e.ColIndex == 0 {
 		e.screen.Echo("Beginning of buffer")
@@ -513,7 +541,8 @@ func (e *Editor) MoveCursorBeginningOfFile() {
 }
 
 func (e *Editor) MoveCursorEndOfFile() {
-	e.RowIndex = e.Rows().RowLength() - 1
+	// e.RowIndex = e.Rows().RowLength() - 1
+	e.RowIndex = e.Rows().Length() - 1
 	// e.drawLine(0, e.RowIndex, 0, false)
 	// bo := e.boundariesArray[e.RowIndex][len(e.boundariesArray[e.RowIndex])-1]
 	//e.makeAvailableBoundariesArray(e.RowIndex) // -------- !
@@ -528,7 +557,8 @@ func (e *Editor) MoveCursorEndOfFile() {
 
 // Move view 'n' lines forward or backward only if it's possible.
 func (e *Editor) MoveViewHalfForward() {
-	n := e.Height / 2
+	// n := e.Height / 2
+	n := e.screen.Height / 2
 	e.screen.Echo("")
 
 	// What index is e.ColIndex in the logical line?
@@ -547,7 +577,8 @@ func (e *Editor) MoveViewHalfForward() {
 		// Add the number of logical row. first subtract the number of logical row before the cursor
 		total += logicalRowLength
 		// indexOfLogicalRow = 0 // No need to subtract after the second time, so 0
-		if total >= n || rowIndex == e.Rows().RowLength()-1 {
+		// if total >= n || rowIndex == e.Rows().RowLength()-1 {
+		if total >= n || rowIndex == e.Rows().Length()-1 {
 			break
 		}
 	}
@@ -571,7 +602,8 @@ func (e *Editor) MoveViewHalfForward() {
 
 // Move view 'n' lines forward or backward.
 func (e *Editor) MoveViewHalfBackward( /* n int */ ) {
-	n := e.Height / 2
+	// n := e.Height / 2
+	n := e.screen.Height / 2
 	e.screen.Echo("")
 
 	// What index number in logic row?
@@ -609,16 +641,17 @@ func (e *Editor) MoveViewHalfBackward( /* n int */ ) {
 }
 
 func (e *Editor) MoveCursorToLine(lineNumber int) {
-	if lineNumber < 1 || lineNumber > e.Rows().RowLength() {
+	if lineNumber < 1 || lineNumber > e.Rows().Length() {
 		return
 	}
 	e.RowIndex = lineNumber - 1
 	e.ColIndex = 0
-	e.Cy = (e.Height - 1) / 2
+	// e.Cy = (e.Height - 1) / 2
+	e.Cy = (e.screen.Height - 1) / 2
 }
 
 func (e *Editor) InsertTab() {
-	if e.SoftTab {
+	if (*e.GetLangMode()).GetSoftTab() {
 		w := utils.TabWidth(e.Cx, e.GetTabWidth())
 		for i := 0; i < w; i++ {
 			// e.InsertRune__(' ')
@@ -647,7 +680,7 @@ func (e *Editor) InsertRune(ch rune) {
 func (e *Editor) DeleteRuneBackward() {
 	start := e.Cursor
 	stop := e.Cursor
-	_, _, colIndex, _ := e.Rows().DecodePrevRune(e.RowIndex, e.ColIndex)
+	_, _, colIndex, _ := e.Rows().Row(e.RowIndex).DecodePrevRune(e.ColIndex)
 
 	if e.ColIndex == 0 {
 		if e.RowIndex == 0 {
@@ -686,7 +719,7 @@ func (e *Editor) DeleteRune() {
 	start := e.Cursor
 	stop := e.Cursor
 
-	beRemovedCh, size, _ := e.Rows().DecodeRune(e.RowIndex, e.ColIndex)
+	beRemovedCh, size, _ := e.Rows().Row(e.RowIndex).DecodeRune(e.ColIndex)
 	if beRemovedCh == '\n' {
 		stop.RowIndex++
 		stop.ColIndex = 0
@@ -839,6 +872,25 @@ func (e *Editor) KillRegion() {
 	e.screen.Echo("Copied")
 }
 
+// unix-line-discard
+// backward-kill-line
+func (e Editor) BackwardKillLine() {
+	if e.ColIndex == 0 {
+		return
+	}
+
+	start := file.Cursor{RowIndex: e.Cursor.RowIndex, ColIndex: 0}
+	removed := e.RemoveRegion(start, e.Cursor)
+	if removed == nil {
+		return
+	}
+
+	e.syncCursorAndBufferForEdit(DELETE, start, e.Cursor)
+	e.UndoAction.Push(file.Action{Class: file.DELETE_BACKWARD, Before: e.Cursor, After: start, Data: *removed})
+
+	e.PrevCx = -1
+}
+
 // Kill line:
 // If not at the EOL, remove contents of the current line from the cursor to the end.
 // Otherwise behave like 'delete'.
@@ -850,7 +902,8 @@ func (e *Editor) KillLine() {
 	stop := e.Cursor
 
 	lines := e.Rows()
-	line, _ := lines.GetRow(e.RowIndex)
+	// line, _ := lines.GetRow(e.RowIndex)
+	line := lines.Row(e.RowIndex)
 	//e.makeAvailableBoundariesArray(e.RowIndex) // -------- !
 	if line.IsColIndexAtRowEnd(e.ColIndex) {
 		if lines.IsRowIndexLastRow(e.RowIndex) {
@@ -862,7 +915,8 @@ func (e *Editor) KillLine() {
 		return
 	}
 
-	l, _ := lines.GetColLength(e.RowIndex)
+	// l, _ := lines.GetColLength(e.RowIndex)
+	l := lines.Row(e.RowIndex).Length()
 	stop.ColIndex = l - 1
 	removed = e.RemoveRegion(e.Cursor, stop)
 	if removed == nil {
@@ -1029,8 +1083,6 @@ func (e *Editor) MoveNextFoundWord() {
 	f := e.foundIndexes[e.currentSearchIndex]
 	e.RowIndex = f.start.RowIndex
 	e.ColIndex = f.start.ColIndex
-	e.Draw()
-	e.drawModeline()
 }
 
 func (e *Editor) MovePrevFoundWord() {
@@ -1059,8 +1111,6 @@ func (e *Editor) MovePrevFoundWord() {
 
 	e.RowIndex = e.foundIndexes[e.currentSearchIndex].start.RowIndex
 	e.ColIndex = e.foundIndexes[e.currentSearchIndex].start.ColIndex
-	e.Draw()
-	e.drawModeline()
 }
 
 // When not using regular expressions
@@ -1089,7 +1139,7 @@ func (e *Editor) SearchRegexp(searchTerm string, caseSensitive bool, ctx context
 	if err != nil {
 		return
 	}
-	for i := 0; i < rows.RowLength(); i++ {
+	for i := 0; i < rows.Length(); i++ {
 		//s := rows.Row__(i).String__()
 		matches := re.FindAllSubmatchIndex((*rows)[i], -1)
 		// s := string((*rows)[i])
@@ -1119,7 +1169,7 @@ func (e *Editor) searchText(text string, caseSensitive bool, ctx context.Context
 	textBytesLen := len(textBytes)
 
 	lines := e.Rows()
-	for i := 0; i < lines.RowLength(); i++ {
+	for i := 0; i < lines.Length(); i++ {
 		line := (*lines)[i]
 		index := 0
 	loop:
@@ -1216,6 +1266,8 @@ func (e *Editor) insertBytes(bytes []byte, enableUndo bool) {
 			e.bsArray.Insert(e.RowIndex, 1)
 			//e.makeAvailableBoundariesArray(e.RowIndex) // -------- !
 			e.ColIndex = 0
+			e.Cy += 1
+			e.Cx = 0
 		} else {
 			//verb.PP("b '%s' %d+%d", string(b), e.ColIndex, bLen)
 			lines.SetRow(e.RowIndex, slices.Insert((*lines)[e.RowIndex], e.ColIndex, b...))
@@ -1277,8 +1329,9 @@ func (e *Editor) getContentWidthoutSpecialCharactor(current file.Cursor, maxCont
 	width := 0
 	skip := false
 	startCol := current.ColIndex
-	for y := current.RowIndex; y < e.Rows().RowLength(); y++ {
-		row, _ := e.Rows().GetRow(y)
+	for y := current.RowIndex; y < e.Rows().Length(); y++ {
+		// row, _ := e.Rows().GetRow(y)
+		row := e.Rows().Row(y)
 		for x := startCol; x < len(*row); {
 			ch, size := utf8.DecodeRune((*row)[x:])
 			w, _ := e.runeWidth(ch, y, x)

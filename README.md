@@ -1,6 +1,6 @@
-# te - Text Editor Functionalities for ge
+# editorview - Text Editor Functionalities for ge
 
-te is a package that provides text editor functionalities for the ge text editor.
+editorview is a package that provides text editor functionalities for the ge text editor.
 
 ## Features
 
@@ -9,17 +9,17 @@ te is a package that provides text editor functionalities for the ge text editor
 
 ## Installation
 
-To use te in your Go project, you can simply import it as follows:
+To use editorview in your Go project, you can simply import it as follows:
 
 ```go
-import "github.com/ge-editor/te"
+import "github.com/ge-editor/editorview"
 ```
 
-Then, you can use the functionalities provided by te in your project.
+Then, you can use the functionalities provided by editorview in your project.
 
 ## Contributing
 
-Contributions to te are welcome! If you find any issues or have suggestions for improvement, please feel free to open an issue or create a pull request on the GitHub repository.
+Contributions to editorview are welcome! If you find any issues or have suggestions for improvement, please feel free to open an issue or create a pull request on the GitHub repository.
 
 ## License
 

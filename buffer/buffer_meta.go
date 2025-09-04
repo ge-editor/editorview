@@ -1,8 +1,8 @@
 package buffer
 
 import (
-	"github.com/ge-editor/te/file"
-	"github.com/ge-editor/te/mark"
+	"github.com/ge-editor/editorview/file"
+	"github.com/ge-editor/editorview/mark"
 )
 
 func newMeta() *Meta {

@@ -3,7 +3,7 @@ package mark
 import (
 	"github.com/ge-editor/utils"
 
-	"github.com/ge-editor/te/file"
+	"github.com/ge-editor/editorview/file"
 )
 
 func NewMarks() *marks {

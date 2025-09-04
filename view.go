@@ -1,4 +1,4 @@
-package te
+package editorview
 
 import (
 	"github.com/ge-editor/gecore/screen"
@@ -7,7 +7,7 @@ import (
 
 func NewView() tree.View {
 	v := View{
-		name:   "te",
+		name:   "editorview",
 		screen: screen.Get(),
 	}
 	return &v
@@ -19,7 +19,7 @@ type View struct {
 	screen *screen.Screen
 }
 
-// Return *te.Editor as *tree.Leaf interface
+// Return *editorview.Editor as *tree.Leaf interface
 func (v *View) NewLeaf() *tree.Leaf {
 	e := newEditor()
 	e.parentView = v

@@ -5,7 +5,7 @@
 
 package buffer
 
-import "github.com/ge-editor/te/file"
+import "github.com/ge-editor/editorview/file"
 
 func newBufferSet(filePath string) *bufferSet {
 	file := file.NewFile(filePath)

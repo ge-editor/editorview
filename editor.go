@@ -1,6 +1,6 @@
 // Editor Struct implements the gecore.tree.Leaf interface
 
-package te
+package editorview
 
 import (
 	"context"
@@ -22,13 +22,18 @@ import (
 
 	"github.com/ge-editor/theme"
 
-	"github.com/ge-editor/te/buffer"
-	"github.com/ge-editor/te/file"
-	"github.com/ge-editor/te/mark"
+	"github.com/ge-editor/editorview/buffer"
+	"github.com/ge-editor/editorview/file"
+	"github.com/ge-editor/editorview/mark"
 )
 
 const (
 	verticalThreshold = 5
+
+	// MiniBufferModes
+	NoMiniBufferMode = iota
+	MiniBufferMode
+	MiniBufferMultilineMode
 )
 
 var (
@@ -48,8 +53,9 @@ func newEditor() *Editor {
 		}
 	}
 	e := &Editor{
-		File: (*BufferSets)[0].File,
-		Meta: (*BufferSets)[0].PopMeta(),
+		File:           (*BufferSets)[0].File,
+		Meta:           (*BufferSets)[0].PopMeta(),
+		miniBufferMode: NoMiniBufferMode,
 	}
 	e.bsArray = NewBoundariesArray(e)
 	return e
@@ -59,7 +65,8 @@ func newEditor() *Editor {
 func (e *Editor) setSpecialCharWidths(rowIndex, colIndex, width int) {
 	// Initialize map array
 	if e.specialCharWidths == nil {
-		e.specialCharWidths = make([]map[int]int, len(*e.Rows()))
+		// e.specialCharWidths = make([]map[int]int, len(*e.Rows()))
+		e.specialCharWidths = make([]map[int]int, (*e).RowsLength())
 	}
 
 	// Add the array size up to the row index
@@ -134,9 +141,8 @@ type Editor struct {
 	screen     *screen.Screen
 	active     bool
 
-	utils.Rect            // overall position on screen
-	viewArea   utils.Rect // include mode line
-	editArea   utils.Rect
+	viewArea utils.Rect // include mode line
+	editArea utils.Rect
 
 	verticalThreshold int // Changes depending on screen size
 
@@ -149,6 +155,8 @@ type Editor struct {
 
 	currentSearchIndex int
 	foundIndexes       []foundPosition
+
+	miniBufferMode int
 }
 
 // ------------------------------------------------------------------
@@ -159,23 +167,27 @@ func (e *Editor) View() *tree.View {
 	return &e.parentView
 }
 
-func (e *Editor) Resize(width, height int, rect utils.Rect) {
-	e.Width, e.Height = width, height
-
-	e.viewArea = rect
-	e.editArea = rect
-	if !e.rightmost() {
-		e.editArea.Width -= 1 // right bar
+func (e *Editor) Resize(viewArea utils.Rect) {
+	e.viewArea = viewArea
+	e.editArea = viewArea
+	if e.miniBufferMode != NoMiniBufferMode {
+		e.verticalThreshold = 0
+	} else {
+		if !e.rightmost() {
+			e.editArea.Width -= 1 // right bar
+		}
+		e.editArea.Height -= 1 // status
+		e.verticalThreshold = utils.Threshold(verticalThreshold, e.editArea.Height)
 	}
-	e.editArea.Height -= 1 // status
-	//e.drawRightBar()
-
-	e.verticalThreshold = utils.Threshold(verticalThreshold, e.editArea.Height)
-
 	e.bsArray.ClearAll()
 }
 
+var d = 0
+
 func (e *Editor) Draw() {
+	verb.PP("editorview.Draw %d", d)
+	d++
+
 	e.drawView()
 	e.drawRightBar()
 }
@@ -244,6 +256,12 @@ func (e *Editor) Init() {
 func (e *Editor) WillClose() {
 }
 
+func (e *Editor) MiniBufferMode(mode int) {
+	e.miniBufferMode = mode
+}
+
+// *********************************************************
+
 // Return the index of the logical line that contains the specified column.
 func (e *Editor) getIndexOfLogicalRow(rowIndex, colIndex int) (int, bool) {
 	l := e.bsArray.BoundariesLen(rowIndex)
@@ -301,7 +319,7 @@ func (e *Editor) syncCursorAndBufferForEdit(sync syncType, start, end file.Curso
 	}
 
 	// Synchronize cursor positions and buffer boundaries in other editors linked to the same file.
-	leaves := tree.GetLeavesByViewName("te")
+	leaves := tree.GetLeavesByViewName("editorview")
 	for _, leaf := range leaves {
 		editor := (*leaf).(*Editor)
 		// Skip if the editor is linked to a different file or is the current editor.
@@ -328,25 +346,16 @@ func (e *Editor) syncCursorAndBufferForEdit(sync syncType, start, end file.Curso
 		switch sync {
 		case INSERT:
 			editor.Cursor.AdjustForInsertion(start, end)
-
 			// Update buffer boundary array if rows were inserted.
 			if end.RowIndex-start.RowIndex > 0 {
 				editor.bsArray.Insert(start.RowIndex+1, end.RowIndex-(start.RowIndex+1))
 			}
-			// Optional: Update virtual lines or boundaries if needed.
-			// editor.vlines.Release__(start.RowIndex, start.RowIndex+1)
-			// editor.vlines.Insert__(start.RowIndex+1, end.RowIndex)
-
 		case DELETE:
 			editor.Cursor.AdjustForDeletion(start, end)
-
 			// Update buffer boundary array if rows were deleted.
 			if count := end.RowIndex - start.RowIndex; count > 0 {
 				editor.bsArray.Delete(start.RowIndex+1, count)
 			}
-			// Optional: Update virtual lines or boundaries if needed.
-			// editor.vlines.Release__(start.RowIndex, start.RowIndex+1)
-			// editor.vlines.Delete__(start.RowIndex+1, end.RowIndex)
 		}
 	}
 }
@@ -396,6 +405,10 @@ func (e *Editor) runeToDisplayStringForModeline(ch rune) string {
 }
 
 func (e *Editor) drawModeline() {
+	if e.miniBufferMode != NoMiniBufferMode {
+		return
+	}
+
 	// cursor position
 	readonly := "-"
 	if e.IsReadonly() {
@@ -407,11 +420,10 @@ func (e *Editor) drawModeline() {
 	}
 
 	s := fmt.Sprintf("-%s%s- %s (%d,%d) ", readonly, modified, e.GetDispPath(), e.RowIndex+1, e.ModelineCx)
-	// s += fmt.Sprintf("%s %s %s", e.GetEncoding(), e.GetLinefeed(), e.GetClass())
-	s += fmt.Sprintf(`%s %s "%s"`, e.GetEncoding(), e.GetLinefeed(), (*e.LangMode).Name())
+	s += fmt.Sprintf(`%s %s "%s"`, e.GetEncoding(), e.GetLinefeed(), (*e.GetLangMode()).Name())
 
 	// char code
-	ch, _, _ := e.Rows().DecodeRune(e.RowIndex, e.ColIndex)
+	ch, _, _ := (*e).Rows().Row(e.RowIndex).DecodeRune(e.ColIndex)
 	str := e.runeToDisplayStringForModeline(ch)
 	s += fmt.Sprintf(" ('%s', %d, 0x%02X)", str, ch, ch)
 
@@ -434,9 +446,9 @@ func (e *Editor) setCell(x, y int, style tcell.Style, ch rune, chWidth int) {
 	if y < 0 || x < 0 {
 		return
 	}
-	e.screen.SetContent(e.editArea.X+x, e.editArea.Y+y, ch, nil, style)
+	e.screen.SetContent(x+e.editArea.X, y+e.editArea.Y, ch, nil, style)
 	for i := 1; i < chWidth; i++ {
-		e.screen.SetContent(e.editArea.X+x+i, e.editArea.Y+y, 0, nil, style)
+		e.screen.SetContent(x+e.editArea.X+i, y+e.editArea.Y, 0, nil, style)
 	}
 }
 
@@ -445,15 +457,23 @@ func (e *Editor) fill(rect utils.Rect, cell screen.Cell) {
 	rect.X += e.editArea.X
 	rect.Y += e.editArea.Y
 	e.screen.Fill(rect, cell)
+
+	/*
+		for i := 0; i < rect.Width; i++ {
+			e.screen.SetContent(rect.X+e.editArea.X+i, rect.Y+e.editArea.Y, ' ', nil, cell.Style)
+			//e.screen.SetContent(e.editArea.X+x+i, e.editArea.Y+y, 0, nil, style)
+		}
+	*/
 }
 
 // Returns bool whether it is the rightmost view
 func (e *Editor) rightmost() bool {
-	return e.viewArea.X+e.viewArea.Width >= e.Width
+	// return e.viewArea.X+e.viewArea.Width >= e.Width
+	return e.viewArea.X+e.viewArea.Width >= e.screen.Width
 }
 
 func (e *Editor) drawRightBar() {
-	if e.rightmost() {
+	if e.rightmost() || e.miniBufferMode != NoMiniBufferMode {
 		return
 	}
 
@@ -487,12 +507,13 @@ func (e *Editor) drawView() {
 
 	var err error
 	if events == nil {
-		events, tree, err = (*e.LangMode).ColorizeEvents(ctx, tree, utils.JoinBytes(*e.Rows()))
+		p, _, _ := utils.JoinBytes(*e.Rows())
+		events, tree, err = (*e.GetLangMode()).ColorizeEvents(ctx, tree, p)
 		if err != nil {
 			verb.PP("Error: %v", err)
 		}
 	}
-	verb.PP("events: %v", events)
+	// verb.PP("events: %v", events)
 
 	/*
 		lines := e.Lines()
@@ -523,10 +544,10 @@ func (e *Editor) drawView() {
 	isAll := false
 	totalRowAboveCursor := -1 // Total of row above the cursor
 	var lcx, lcy int
-	if e.RowIndex <= height || e.Rows().RowLength() <= height {
+	if e.RowIndex <= height || (*e).RowsLength() <= height {
 		isAll = true
 		sumLines := 0
-		for i := 0; i < e.Rows().RowLength(); i++ {
+		for i := 0; i < e.RowsLength(); i++ {
 			// verb.PP("loop 1")
 			e.drawLine(0, i, -1, false, &foundPositionIndex, nil, 0, theme.ColorDefault) // compute boundary
 			// verb.PP("bo1 %#v", e.boundariesArray[i])
@@ -572,11 +593,6 @@ func (e *Editor) drawView() {
 		y := e.Cy - logicalCY
 		for i := e.RowIndex - 1; i >= 0; i-- {
 			e.drawLine(0, i, 0, false, &foundPositionIndex, nil, 0, theme.ColorDefault)
-			// verb.PP("loop 2")
-			// vl := e.vlines.GetVline__(i)
-			// y -= vl.LenLogicalRow__()
-			// y -= len(e.boundariesArray[i])
-			// y -= e.bsay.Boundaries(i).Len()
 			y -= e.bsArray.BoundariesLen(i) //.Boundaries(i).Len()
 			if y <= 0 {
 				e.StartDrawRowIndex = i
@@ -593,7 +609,7 @@ func (e *Editor) drawView() {
 
 	// Tree-sitter
 	// 描画開始行以降の eventIndex を取得する
-	eventIndex, currentStyle, err := (*e.LangMode).EventIndex(ctx, e.StartDrawRowIndex, 0, *e.Rows(), events, 0)
+	eventIndex, currentStyle, err := (*e.GetLangMode()).EventIndex(ctx, e.StartDrawRowIndex, 0, *e.Rows(), events, 0)
 	if err != nil {
 		verb.PP("EventIndex error: %s", err)
 	}
@@ -607,7 +623,7 @@ func (e *Editor) drawView() {
 	foundPositionIndex = e.getFoundPosition(e.StartDrawRowIndex)
 	// verb.PP("*foundPositionIndex %d", foundPositionIndex)
 	var i int
-	for i = e.StartDrawRowIndex; i < e.Rows().RowLength(); i++ {
+	for i = e.StartDrawRowIndex; i < (*e).RowsLength(); i++ {
 		//verb.PP("loop 3")
 		if y >= height || y > 10000 {
 			break
@@ -651,14 +667,14 @@ type Number interface {
 	int | int32 | int64 | float32 | float64
 }
 
-// isCursorInRange2 checks if the cursor position (row, col) is within the range
+// isCursorInRange checks if the cursor position (row, col) is within the range
 // defined by the top-left (row1, col1) and bottom-right (row2, col2) corners.
 // It returns:
 //
 //	-1 if the cursor is before the range,
 //	 1 if the cursor is after the range,
 //	 0 if the cursor is within the range.
-func isCursorInRange[T Number](row, col, row1, col1, row2, col2 T) T {
+func isCursorInRange(row, col, row1, col1, row2, col2 int) int {
 	// Handle cases where the range is reversed (either vertically or horizontally)
 	if row1 > row2 {
 		row1, row2 = row2, row1
@@ -718,12 +734,13 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 	var p2, p1, c cell
 	var breakpoint Boundary
 	lines := e.Rows()
-	isEndOfRow := rowIndex == lines.RowLength()-1
-	lineLength, ok := lines.GetColLength(rowIndex)
+	isEndOfRow := rowIndex == (*lines).Length()-1
+	lineLength := (*lines).Row(rowIndex).Length()
 	totalWidth := 0 // for compute tab stop
-	if !ok {
-		panic("GetColLength")
-	}
+	/* 	if !ok {
+	   		panic("GetColLength")
+	   	}
+	*/
 
 	bo := []Boundary{}
 	startIndex := 0
@@ -743,8 +760,10 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 
 		isLastCh := i == lineLength-1
 		var ch, ch2 rune
+		var ok bool
 		ch2 = 0
-		ch, c.size, ok = lines.DecodeRune(rowIndex, i)
+		// ch, c.size, ok = lines.DecodeRune(rowIndex, i)
+		ch, c.size, ok = (*lines).Row(rowIndex).DecodeRune(i)
 		if !ok {
 			panic(fmt.Sprintf("%d '%s'", rowIndex, string((*lines)[rowIndex])))
 		}
@@ -867,6 +886,7 @@ func (e *Editor) drawLine(n, rowIndex, cursorLogicalCY int, draw bool, foundPosi
 			if isLastCh {
 				bo = append(bo, Boundary{StartIndex: startIndex, StopIndex: i + c.size, Width: x + c.width, TotalWidth: totalWidth + c.width})
 				if draw {
+					//
 					e.fill(utils.Rect{X: x + c.width, Y: y, Width: e.editArea.Width - (x + c.width), Height: 1}, screen.Cell{Style: theme.ColorDefault.Underline(isUnderline())})
 				}
 				y++
@@ -895,7 +915,8 @@ func (e *Editor) cursorPositionOnScreenLogicalRow(rowIndex, colIndex int) (lx, l
 	for ly = 0; ly < e.bsArray.BoundariesLen(rowIndex); ly++ {
 		if colIndex >= e.bsArray.Boundary(rowIndex, ly).StartIndex && colIndex < e.bsArray.Boundary(rowIndex, ly).StopIndex {
 			for i := e.bsArray.Boundary(rowIndex, ly).StartIndex; i < colIndex; {
-				ch, size, ok := e.Rows().DecodeRune(rowIndex, i)
+				// ch, size, ok := e.Rows().DecodeRune(rowIndex, i)
+				ch, size, ok := (*e).Rows().Row(rowIndex).DecodeRune(i)
 				if !ok {
 					break
 				}
