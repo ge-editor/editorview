@@ -51,8 +51,9 @@ type File struct {
 
 	flags // readonly
 
-	UndoAction *ActionGroup
-	RedoAction *ActionGroup
+	// UndoAction *ActionGroup
+	// RedoAction *ActionGroup
+	UndoAction *UndoStack
 }
 
 // Call New() or Load() after invoking this function
@@ -78,8 +79,9 @@ func NewFile(rawPath string) *File {
 
 		flags: 0,
 
-		UndoAction: &ActionGroup{},
-		RedoAction: &ActionGroup{},
+		// UndoAction: &ActionGroup{},
+		// RedoAction: &ActionGroup{},
+		UndoAction: NewUndoStack(),
 	}
 	ff.init()
 	return ff
@@ -484,5 +486,6 @@ func (ff *File) IsReadonly() bool {
 */
 
 func (ff *File) IsDirtyFlag() bool {
-	return !ff.UndoAction.IsEmpty()
+	// return !ff.UndoAction.IsEmpty()
+	return ff.UndoAction.IsDirty()
 }

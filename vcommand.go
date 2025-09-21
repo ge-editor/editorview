@@ -92,7 +92,8 @@ func (e *Editor) SaveFile() {
 		e.screen.Echo(err.Error() + backupMessage)
 	}
 
-	e.UndoAction.MoveTo(e.RedoAction)
+	// e.UndoAction.MoveTo(e.RedoAction)
+	e.UndoAction.MarkSaved()
 }
 
 // If an existing file is specified, it will be overwritten
@@ -706,7 +707,7 @@ func (e *Editor) DeleteRuneBackward() {
 		e.bsArray.Delete(start.RowIndex+1, count)
 	}
 
-	e.UndoAction.Push(file.Action{Class: file.DELETE_BACKWARD, Before: stop, After: start, Data: *removed})
+	e.UndoAction.PushAction(&file.EditAction{Class: file.DELETE_BACKWARD, Before: stop, After: start, Data: *removed})
 	e.syncCursorAndBufferForEdit(DELETE, start, stop)
 
 	e.PrevCx = -1
@@ -737,7 +738,7 @@ func (e *Editor) DeleteRune() {
 		e.bsArray.Delete(start.RowIndex+1, count)
 	}
 
-	e.UndoAction.Push(file.Action{Class: file.DELETE, Before: start, After: start, Data: *removed})
+	e.UndoAction.PushAction(&file.EditAction{Class: file.DELETE, Before: start, After: start, Data: *removed})
 	e.syncCursorAndBufferForEdit(DELETE, stop, start)
 
 	e.PrevCx = -1
@@ -839,7 +840,7 @@ func (e *Editor) killRegion(start, stop file.Cursor) {
 	}
 
 	e.syncCursorAndBufferForEdit(DELETE, start, stop)
-	e.UndoAction.Push(file.Action{Class: file.DELETE_BACKWARD, Before: start, After: start, Data: *removed})
+	e.UndoAction.PushAction(&file.EditAction{Class: file.DELETE_BACKWARD, Before: start, After: start, Data: *removed})
 	if err := kill_buffer.KillBuffer.PushKillBuffer([]byte(string(*removed))); err != nil {
 		e.screen.Echo(err.Error())
 	}
@@ -886,7 +887,7 @@ func (e Editor) BackwardKillLine() {
 	}
 
 	e.syncCursorAndBufferForEdit(DELETE, start, e.Cursor)
-	e.UndoAction.Push(file.Action{Class: file.DELETE_BACKWARD, Before: e.Cursor, After: start, Data: *removed})
+	e.UndoAction.PushAction(&file.EditAction{Class: file.DELETE_BACKWARD, Before: e.Cursor, After: start, Data: *removed})
 
 	e.PrevCx = -1
 }
@@ -931,7 +932,7 @@ func (e *Editor) KillLine() {
 	// e.bsay.bsayDelete(e.RowIndex+1, stop.RowIndex+1)
 
 	e.syncCursorAndBufferForEdit(DELETE, e.Cursor, stop)
-	e.UndoAction.Push(file.Action{Class: file.DELETE, Before: e.Cursor, After: e.Cursor, Data: *removed})
+	e.UndoAction.PushAction(&file.EditAction{Class: file.DELETE, Before: e.Cursor, After: e.Cursor, Data: *removed})
 
 	e.PrevCx = -1
 }
@@ -962,90 +963,94 @@ func (e *Editor) Yank() {
 // ------------------------------------------------------------------
 
 func (e *Editor) Undo() {
-	if e.UndoAction.IsEmpty() {
+	if e.UndoAction.IsUndoEmpty() {
 		e.screen.Echo("No further undo information")
 		return
 	}
 
-	a, _ := e.UndoAction.Pop()
-	// verb.PP("e.UndoAction.Pop() %v %v '%s'", a.Before, a.After, string(a.Data))
-	if a.Class == file.INSERT {
-		e.RemoveRegion(a.Before, a.After)
+	actions := e.UndoAction.Undo() //.Pop()
+	for _, a := range actions {
+		// verb.PP("e.UndoAction.Pop() %v %v '%s'", a.Before, a.After, string(a.Data))
+		if a.Class == file.INSERT {
+			e.RemoveRegion(a.Before, a.After)
 
-		// e.screen.Echo(fmt.Sprintf("Undo %d:%d", start.RowIndex+1, stop.RowIndex+1))
-		//e.makeAvailableBoundariesArray(a.Before.RowIndex) // -------- !
-		// e.bsay.bsayDelete(a.Before.RowIndex+1, a.After.RowIndex+1)
-		if count := a.After.RowIndex - a.Before.RowIndex; count > 0 {
-			e.bsArray.Delete(a.Before.RowIndex+1, count)
+			// e.screen.Echo(fmt.Sprintf("Undo %d:%d", start.RowIndex+1, stop.RowIndex+1))
+			//e.makeAvailableBoundariesArray(a.Before.RowIndex) // -------- !
+			// e.bsay.bsayDelete(a.Before.RowIndex+1, a.After.RowIndex+1)
+			if count := a.After.RowIndex - a.Before.RowIndex; count > 0 {
+				e.bsArray.Delete(a.Before.RowIndex+1, count)
+			}
+
+			e.syncCursorAndBufferForEdit(DELETE, a.Before, a.After)
+			e.Cursor = a.Before
+		} else if a.Class == file.DELETE {
+			e.Cursor = a.Before
+			e.insertBytes(a.Data, false)
+			e.syncCursorAndBufferForEdit(INSERT, a.Before, a.After)
+			e.Cursor = a.Before
+		} else if a.Class == file.DELETE_BACKWARD {
+			e.Cursor = a.After
+			e.insertBytes(a.Data, false)
+			e.syncCursorAndBufferForEdit(INSERT, a.After, a.Before)
+		} else {
+			return
 		}
-
-		e.syncCursorAndBufferForEdit(DELETE, a.Before, a.After)
-		e.Cursor = a.Before
-	} else if a.Class == file.DELETE {
-		e.Cursor = a.Before
-		e.insertBytes(a.Data, false)
-		e.syncCursorAndBufferForEdit(INSERT, a.Before, a.After)
-		e.Cursor = a.Before
-	} else if a.Class == file.DELETE_BACKWARD {
-		e.Cursor = a.After
-		e.insertBytes(a.Data, false)
-		e.syncCursorAndBufferForEdit(INSERT, a.After, a.Before)
-	} else {
-		return
 	}
 
 	e.screen.Echo("Undo!")
-	e.RedoAction.Push(a)
+	// e.RedoAction.Push(a)
 }
 
 func (e *Editor) Redo() {
-	if e.RedoAction.IsEmpty() {
+	if e.UndoAction.IsRedoEmpty() {
 		e.screen.Echo("No further redo information")
 		return
 	}
 
-	a, _ := e.RedoAction.Pop()
-	if a.Class == file.INSERT {
-		e.Cursor = a.Before
-		e.insertBytes(a.Data, false)
-	} else if a.Class == file.DELETE_BACKWARD {
-		e.RemoveRegion(a.After, a.Before)
+	actions := e.UndoAction.Redo()
+	for _, a := range actions {
+		if a.Class == file.INSERT {
+			e.Cursor = a.Before
+			e.insertBytes(a.Data, false)
+		} else if a.Class == file.DELETE_BACKWARD {
+			e.RemoveRegion(a.After, a.Before)
 
-		// e.screen.Echo(fmt.Sprintf("Redo DELETE_BACKWARD %d:%d", a.After.RowIndex+1, a.Before.RowIndex+1))
-		//e.makeAvailableBoundariesArray(a.After.RowIndex) // -------- !
-		// e.bsay.bsayDelete(a.After.RowIndex+1, a.Before.RowIndex+1)
-		if count := a.Before.RowIndex - a.After.RowIndex; count > 0 {
-			e.bsArray.Delete(a.After.RowIndex+1, count)
+			// e.screen.Echo(fmt.Sprintf("Redo DELETE_BACKWARD %d:%d", a.After.RowIndex+1, a.Before.RowIndex+1))
+			//e.makeAvailableBoundariesArray(a.After.RowIndex) // -------- !
+			// e.bsay.bsayDelete(a.After.RowIndex+1, a.Before.RowIndex+1)
+			if count := a.Before.RowIndex - a.After.RowIndex; count > 0 {
+				e.bsArray.Delete(a.After.RowIndex+1, count)
+			}
+
+			e.syncCursorAndBufferForEdit(DELETE, a.After, a.Before)
+		} else if a.Class == file.DELETE {
+			lines := file.SplitByLF(a.Data)
+			last := lines[len(lines)-1]
+			cursor := a.After
+			cursor.RowIndex += len(lines) - 1
+			cursor.ColIndex += len(last)
+			if last[len(last)-1] == '\n' {
+				cursor.RowIndex++
+				cursor.ColIndex = 0
+			}
+			e.RemoveRegion(a.Before, cursor)
+
+			// e.screen.Echo(fmt.Sprintf("Redo DELETE %d:%d", a.Before.RowIndex+1, cursor.RowIndex+1))
+			//e.makeAvailableBoundariesArray(a.Before.RowIndex) // -------- !
+			// e.bsay.bsayDelete(a.Before.RowIndex+1, cursor.RowIndex+1)
+			if count := cursor.RowIndex - a.Before.RowIndex; count > 0 {
+				e.bsArray.Delete(a.Before.RowIndex+1, count)
+			}
+
+			e.syncCursorAndBufferForEdit(DELETE, a.Before, cursor)
+		} else {
+			return
 		}
-
-		e.syncCursorAndBufferForEdit(DELETE, a.After, a.Before)
-	} else if a.Class == file.DELETE {
-		lines := file.SplitByLF(a.Data)
-		last := lines[len(lines)-1]
-		cursor := a.After
-		cursor.RowIndex += len(lines) - 1
-		cursor.ColIndex += len(last)
-		if last[len(last)-1] == '\n' {
-			cursor.RowIndex++
-			cursor.ColIndex = 0
-		}
-		e.RemoveRegion(a.Before, cursor)
-
-		// e.screen.Echo(fmt.Sprintf("Redo DELETE %d:%d", a.Before.RowIndex+1, cursor.RowIndex+1))
-		//e.makeAvailableBoundariesArray(a.Before.RowIndex) // -------- !
-		// e.bsay.bsayDelete(a.Before.RowIndex+1, cursor.RowIndex+1)
-		if count := cursor.RowIndex - a.Before.RowIndex; count > 0 {
-			e.bsArray.Delete(a.Before.RowIndex+1, count)
-		}
-
-		e.syncCursorAndBufferForEdit(DELETE, a.Before, cursor)
-	} else {
-		return
+		e.Cursor = a.After
 	}
-	e.Cursor = a.After
 
 	e.screen.Echo("Redo!")
-	e.UndoAction.Push(a)
+	// e.UndoAction.Push(a)
 }
 
 // ------------------------------------------------------------------
@@ -1281,7 +1286,7 @@ func (e *Editor) insertBytes(bytes []byte, enableUndo bool) {
 	}
 
 	if enableUndo {
-		e.UndoAction.Push(file.Action{Class: file.INSERT, Before: beforeCursor, After: e.Cursor, Data: bytes})
+		e.UndoAction.PushAction(&file.EditAction{Class: file.INSERT, Before: beforeCursor, After: e.Cursor, Data: bytes})
 	}
 	e.syncCursorAndBufferForEdit(INSERT, beforeCursor, e.Cursor)
 
